@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte'
   import { api, type Enrollment } from '../api'
+  import { copyText } from '../clipboard'
   import { systems } from '../systems.svelte'
   import Icon from './Icon.svelte'
 
@@ -73,19 +74,7 @@
   const joined = $derived(systems.list.filter((s) => !knownIds.has(s.id)))
 
   async function copy() {
-    try {
-      await navigator.clipboard.writeText(command)
-    } catch {
-      // navigator.clipboard only exists on https or localhost
-      const ta = document.createElement('textarea')
-      ta.value = command
-      ta.style.position = 'fixed'
-      ta.style.opacity = '0'
-      document.body.append(ta)
-      ta.select()
-      document.execCommand('copy')
-      ta.remove()
-    }
+    await copyText(command)
     copied = true
     setTimeout(() => (copied = false), 2000)
   }

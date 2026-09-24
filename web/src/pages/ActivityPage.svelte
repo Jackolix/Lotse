@@ -2,7 +2,9 @@
   import { onMount } from 'svelte'
   import { api, type AuditEntry } from '../lib/api'
   import { dateTime } from '../lib/format'
-  import { link } from '../lib/router.svelte'
+  import { openMenu, type MenuEntry } from '../lib/menu.svelte'
+  import { link, navigate } from '../lib/router.svelte'
+  import { copy } from '../lib/systemActions'
   import { systems } from '../lib/systems.svelte'
 
   let entries = $state<AuditEntry[]>([])
@@ -46,6 +48,30 @@
   }
 
   onMount(load)
+
+  function entryMenu(e: AuditEntry): MenuEntry[] {
+    const sys = e.system_id ? systems.get(e.system_id) : undefined
+    const line = [dateTime(e.t), labels[e.action] ?? e.action, e.username, e.system_name, e.detail, e.remote]
+      .filter(Boolean)
+      .join(' · ')
+    return [
+      {
+        label: 'Open system',
+        icon: 'server',
+        disabled: !sys,
+        hint: e.system_name ? 'This system no longer exists' : 'No system involved',
+        action: () => navigate(`/systems/${e.system_id}`),
+      },
+      'separator',
+      { label: 'Copy entry', icon: 'copy', action: () => copy(line, 'Entry') },
+      {
+        label: `Copy source address${e.remote ? ` (${e.remote})` : ''}`,
+        icon: 'copy',
+        disabled: !e.remote,
+        action: () => copy(e.remote ?? '', 'Address'),
+      },
+    ]
+  }
 </script>
 
 <h1 class="text-xl font-semibold">Activity</h1>
@@ -66,7 +92,7 @@
       </thead>
       <tbody>
         {#each entries as e (e.id)}
-          <tr class="border-t border-line align-top">
+          <tr class="border-t border-line align-top" oncontextmenu={(ev) => openMenu(ev, entryMenu(e))}>
             <td class="tabular px-4 py-2 whitespace-nowrap text-ink-2">{dateTime(e.t)}</td>
             <td class="py-2 pr-4">
               {#if failed(e.action)}

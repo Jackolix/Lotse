@@ -289,6 +289,11 @@ func (h *Hub) getMetrics(w http.ResponseWriter, r *http.Request, _ *store.Sessio
 		h.internalError(w, err)
 		return
 	}
+	// The minute in progress is only stored once it ends; show it anyway so the
+	// line reaches the right edge.
+	if row, ok := h.currentBucket(sys.ID); ok && rg.res == store.Res1 && (len(rows) == 0 || row.TS > rows[len(rows)-1].TS) {
+		rows = append(rows, row)
+	}
 	writeJSON(w, http.StatusOK, buildSeries(rows, int64(rg.res)*60, from, now))
 }
 

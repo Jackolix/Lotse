@@ -19,19 +19,21 @@
   let { title, value = '', series, ...rest }: Props = $props()
 </script>
 
-<section class="card min-w-0 p-4">
-  <header class="mb-2 flex flex-wrap items-baseline justify-between gap-x-3">
+<!-- The legend sits in the header row, so cards with one or several series are the
+     same height and line up in the grid. -->
+<section class="card min-w-0 p-4 pb-3">
+  <header class="mb-1 flex flex-wrap items-baseline gap-x-4 gap-y-1">
     <h3 class="text-sm font-medium text-ink">{title}</h3>
-    {#if value}<span class="tabular text-sm text-ink-2">{value}</span>{/if}
+    {#if series.length > 1}
+      <ul class="flex flex-wrap gap-x-3 text-xs text-ink-2">
+        {#each series as s (s.label)}
+          <li class="flex items-center gap-1.5">
+            <span class="h-0.5 w-3 rounded-full" style:background="var({s.color})"></span>{s.label}
+          </li>
+        {/each}
+      </ul>
+    {/if}
+    {#if value}<span class="tabular ml-auto text-sm text-ink-2">{value}</span>{/if}
   </header>
-  {#if series.length > 1}
-    <ul class="mb-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-2">
-      {#each series as s (s.label)}
-        <li class="flex items-center gap-1.5">
-          <span class="h-0.5 w-3 rounded-full" style:background="var({s.color})"></span>{s.label}
-        </li>
-      {/each}
-    </ul>
-  {/if}
   <Chart {series} label="{title} chart" {...rest} />
 </section>

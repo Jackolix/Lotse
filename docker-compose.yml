@@ -1,7 +1,9 @@
 services:
   hub:
+    # Published by GitHub Actions: "latest" is the newest release, "main" follows the
+    # main branch. `docker compose up -d --build` builds from source instead.
+    image: ghcr.io/jackolix/lotse:latest
     build: .
-    image: lotse-hub:latest
     container_name: lotse-hub
     restart: unless-stopped
     ports:

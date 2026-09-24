@@ -41,7 +41,8 @@ web/                        Svelte 5 + Vite + Tailwind + uPlot, embedded into th
 ## Running the hub
 
 ```sh
-docker compose up -d --build
+docker compose pull && docker compose up -d      # release image from ghcr.io/jackolix/lotse
+docker compose up -d --build                     # or build from source
 ```
 
 Open `http://<docker-host>:8090`. On first visit you create the admin account.
@@ -78,6 +79,18 @@ docker exec lotse-hub /app/hub token --ttl 2h [--allow-shell]
 | Linux   | `/usr/local/bin/lotse-agent`  | `/etc/lotse-agent/`                        | `journalctl -u lotse-agent`     |
 | macOS   | `/usr/local/bin/lotse-agent`  | `/Library/Application Support/lotse-agent/`| `/Library/Logs/lotse-agent.log` |
 | Windows | `C:\Program Files\lotse-agent\` | `C:\ProgramData\lotse-agent\`            | `C:\ProgramData\lotse-agent\agent.log` |
+
+Agents are also published on the [releases page](https://github.com/Jackolix/Lotse/releases) with
+`sha256sums.txt`, if you'd rather install without the script:
+
+```sh
+curl -fLO https://github.com/Jackolix/Lotse/releases/latest/download/lotse-agent-linux-amd64
+sudo install lotse-agent-linux-amd64 /usr/local/bin/lotse-agent
+sudo lotse-agent install --hub http://hub.lan:8090 --key 'ssh-ed25519 …' --token … [--allow-shell]
+```
+
+A hub serves the agents built into its image. If it doesn't carry one, it redirects the download to
+its own version on GitHub.
 
 To remove an agent, run `sudo lotse-agent uninstall --purge` (or the same command in an elevated
 PowerShell), then delete the binary.
@@ -125,6 +138,15 @@ Ethernet.
   addresses of their own networks.
 - The install command fetches the installer over whatever scheme the hub URL uses. On an untrusted network,
   put the hub behind HTTPS (Caddy, Traefik) and set `HUB_URL=https://…`.
+
+## Releases
+
+GitHub Actions (`.github/workflows/build.yml`) tests every push and pull request. It runs gofmt, go vet for all
+agent platforms, `go test -race` and svelte-check.
+
+- Every push to `main` publishes the Docker image `ghcr.io/jackolix/lotse:main` for amd64 and arm64.
+- Pushing a tag like `v0.3.0` publishes `:0.3.0`, `:0.3` and `:latest`, and creates a GitHub release. The release
+  contains the agents for every platform, hub binaries for Linux, and checksums.
 
 ## Development
 

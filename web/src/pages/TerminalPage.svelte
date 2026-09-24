@@ -6,7 +6,10 @@
   import Icon from '../lib/components/Icon.svelte'
   import ReauthDialog from '../lib/components/ReauthDialog.svelte'
   import StatusDot from '../lib/components/StatusDot.svelte'
+  import { canReadClipboard, copyText } from '../lib/clipboard'
+  import { openMenu } from '../lib/menu.svelte'
   import { link } from '../lib/router.svelte'
+  import { toast } from '../lib/toast.svelte'
   import { systems } from '../lib/systems.svelte'
 
   let { id }: { id: number } = $props()
@@ -114,6 +117,46 @@
     }
   }
 
+  // Captured before xterm sees the event, so the browser's own menu never shows.
+  function terminalMenu(e: MouseEvent) {
+    if (!term) return
+    const t = term
+    const selection = t.getSelection()
+    const mod = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl+Shift+'
+    openMenu(e, [
+      {
+        label: 'Copy',
+        icon: 'copy',
+        disabled: !selection,
+        hint: 'Select text first',
+        action: async () => {
+          if (!(await copyText(selection))) toast('Could not copy the selection', 'error')
+          t.focus()
+        },
+      },
+      {
+        label: 'Paste',
+        icon: 'clipboard',
+        disabled: !canReadClipboard() || phase !== 'ready',
+        hint: phase !== 'ready' ? 'Not connected' : `Browsers only allow this over https; use ${mod}V`,
+        action: async () => {
+          try {
+            t.paste(await navigator.clipboard.readText())
+          } catch {
+            toast(`Clipboard access was blocked; use ${mod}V`, 'error')
+          }
+          t.focus()
+        },
+      },
+      { label: 'Select all', icon: 'list', action: () => t.selectAll() },
+      { label: 'Clear screen', icon: 'x', action: () => (t.clear(), t.focus()) },
+      'separator',
+      phase === 'ready'
+        ? { label: 'Disconnect', icon: 'logout', action: disconnect }
+        : { label: 'Reconnect', icon: 'refresh', action: connect },
+    ])
+  }
+
   function disconnect() {
     ws?.close()
     phase = 'closed'
@@ -150,7 +193,7 @@
   style:background={palette.background}
   class:opacity-60={phase !== 'ready'}
 >
-  <div bind:this={host} class="h-[calc(100dvh-11rem)] min-h-72"></div>
+  <div bind:this={host} class="h-[calc(100dvh-11rem)] min-h-72" oncontextmenucapture={terminalMenu}></div>
 </div>
 
 <ReauthDialog

@@ -74,10 +74,11 @@
         y: { range: (_u, _min, max) => [0, yMax ?? (max > 0 ? max * 1.1 : 1)] },
       },
       axes: [
-        { ...axis, space: 70, values: (_u, splits) => splits.map(tickLabel) },
+        // Single-line time labels need far less than uPlot's default 50px.
+        { ...axis, size: 26, space: 70, values: (_u, splits) => splits.map(tickLabel) },
         {
           ...axis,
-          size: 64,
+          size: fitLabels,
           space: 32,
           ticks: { show: false },
           incrs: binary ? BINARY_INCRS : undefined,
@@ -98,6 +99,17 @@
       hooks: { setCursor: [showTooltip] },
     }
     return new uPlot(opts, data, el)
+  }
+
+  // Size the y axis to its widest label instead of a fixed width (uPlot re-runs this
+  // until the size settles; cycleNum > 1 forces convergence).
+  function fitLabels(u: uPlot, values: string[] | null, axisIdx: number, cycleNum: number): number {
+    const ax = u.axes[axisIdx] as uPlot.Axis & { _size?: number; font: [string, number] }
+    if (cycleNum > 1 && ax._size) return ax._size
+    const longest = (values ?? []).reduce((a, v) => (v.length > a.length ? v : a), '')
+    if (!longest) return 24
+    u.ctx.font = ax.font[0]
+    return Math.ceil(u.ctx.measureText(longest).width / devicePixelRatio) + 10
   }
 
   // Axis labels match the range: times within two days, dates beyond.

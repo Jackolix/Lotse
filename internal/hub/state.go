@@ -136,6 +136,27 @@ func (h *Hub) flushState(id int64, st *sysState, force bool) {
 	h.writeBucket(id, row, latest, seen)
 }
 
+// currentBucket averages the samples of the minute in progress, stamped with the
+// latest sample's time.
+func (h *Hub) currentBucket(id int64) (store.MetricRow, bool) {
+	h.mu.Lock()
+	st := h.states[id]
+	h.mu.Unlock()
+	if st == nil {
+		return store.MetricRow{}, false
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.n == 0 {
+		return store.MetricRow{}, false
+	}
+	row := store.MetricRow{TS: st.latestAt}
+	for i := range st.sum {
+		row.Values[i] = st.sum[i] / float64(st.n)
+	}
+	return row, true
+}
+
 // liveSeries returns the recent samples kept in memory for the "Live" range.
 func (h *Hub) liveSeries(id int64) []store.MetricRow {
 	h.mu.Lock()

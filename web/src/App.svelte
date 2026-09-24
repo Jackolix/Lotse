@@ -1,7 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { auth, checkAuth, signOut } from './lib/auth.svelte'
+  import ContextMenu from './lib/components/ContextMenu.svelte'
+  import Dialogs from './lib/components/Dialogs.svelte'
   import Icon from './lib/components/Icon.svelte'
+  import Toaster from './lib/components/Toaster.svelte'
   import { link, route } from './lib/router.svelte'
   import { systems } from './lib/systems.svelte'
   import { setTheme, theme, type ThemeMode } from './lib/theme.svelte'
@@ -101,3 +104,7 @@
     {/if}
   </main>
 {/if}
+
+<ContextMenu />
+<Dialogs />
+<Toaster />

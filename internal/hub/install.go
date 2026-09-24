@@ -36,6 +36,7 @@ var agentFileRE = regexp.MustCompile(`^` + regexp.QuoteMeta(version.AgentName) +
 
 // getAgentBinary serves prebuilt agents. The Docker image stores them gzipped;
 // clients that don't accept gzip (wget, Windows PowerShell 5) get them unpacked.
+// Binaries this hub does not carry are fetched from the matching GitHub release.
 func (h *Hub) getAgentBinary(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("file")
 	m := agentFileRE.FindStringSubmatch(name)
@@ -72,6 +73,10 @@ func (h *Hub) getAgentBinary(w http.ResponseWriter, r *http.Request) {
 			http.ServeContent(w, r, name, fi.ModTime(), f)
 			return
 		}
+	}
+	if url := version.ReleaseAssetURL(name); url != "" {
+		http.Redirect(w, r, url, http.StatusFound)
+		return
 	}
 	writeError(w, http.StatusNotFound, "this hub build has no agent for "+m[1]+"/"+m[2])
 }

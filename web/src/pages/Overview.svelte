@@ -5,6 +5,8 @@
   import StatusDot from '../lib/components/StatusDot.svelte'
   import { ago, archLabel, bytes, duration, osLabel, rate, ratio } from '../lib/format'
   import { link } from '../lib/router.svelte'
+  import { openMenu } from '../lib/menu.svelte'
+  import { systemMenu } from '../lib/systemActions'
   import { systems } from '../lib/systems.svelte'
 
   let adding = $state(false)
@@ -63,6 +65,7 @@
       <a
         href="/systems/{s.id}"
         onclick={link}
+        oncontextmenu={(e) => openMenu(e, systemMenu(s))}
         class="{cols} border-b border-line px-4 py-3 last:border-b-0 hover:bg-sunken"
       >
         <div class="col-span-2 min-w-0 md:col-span-1">

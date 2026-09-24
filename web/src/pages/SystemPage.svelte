@@ -8,6 +8,7 @@
   import StatusDot from '../lib/components/StatusDot.svelte'
   import { ago, archLabel, bytes, duration, osLabel, pct, rate, ratio } from '../lib/format'
   import { link, navigate } from '../lib/router.svelte'
+  import { canShell as shellAllowed, deleteSystem, ipv4Of, macsOf, wakeSystem } from '../lib/systemActions'
   import { systems } from '../lib/systems.svelte'
 
   let { id }: { id: number } = $props()
@@ -32,7 +33,6 @@
   let renaming = $state(false)
   let newName = $state('')
   let actionError = $state('')
-  let wakeNote = $state('')
   let waking = $state(false)
 
   const sys = $derived(systems.get(id))
@@ -76,7 +76,7 @@
     if (r === 'live') {
       return systems.onMetrics(id, (t, sample) => (series = appendLive(series, t, sample)))
     }
-    const timer = setInterval(() => load(r), 60_000)
+    const timer = setInterval(() => load(r), r === '1h' ? 20_000 : 60_000)
     return () => clearInterval(timer)
   })
 
@@ -107,27 +107,15 @@
   const memMax = $derived(Math.max(memTotal, maxOf(series?.values.swap_used)))
   const diskMax = $derived(Math.max(m?.disk_total ?? 0, maxOf(series?.values.disk_total)))
   const isWindows = $derived(sys?.info.os === 'windows')
-  const canShell = $derived(!!sys?.online && sys.features.includes('shell'))
-  const macs = $derived([...new Set((sys?.info.interfaces ?? []).map((i) => i.mac))])
-  const ipv4 = $derived(
-    (sys?.info.interfaces ?? []).flatMap((i) => i.addrs).find((a) => /^\d+\.\d+\.\d+\.\d+\//.test(a))?.split('/')[0],
-  )
+  const canShell = $derived(sys ? shellAllowed(sys) : false)
+  const macs = $derived(sys ? macsOf(sys) : [])
+  const ipv4 = $derived(sys ? ipv4Of(sys) : undefined)
 
   async function wake() {
+    if (!sys) return
     waking = true
-    wakeNote = ''
-    actionError = ''
-    try {
-      const r = await api.wake(id)
-      wakeNote =
-        r.via === 'hub'
-          ? `Magic packet sent by the hub to ${r.broadcast}. No online agent shares a network with this machine, so it only arrives if the hub runs with host networking.`
-          : `Magic packet sent via ${r.via} to ${r.broadcast}. The machine should come online within a minute if Wake-on-LAN is enabled.`
-    } catch (err) {
-      actionError = err instanceof Error ? err.message : 'Wake-on-LAN failed'
-    } finally {
-      waking = false
-    }
+    await wakeSystem(sys)
+    waking = false
   }
   const load2 = (v: number) => v.toFixed(2)
 
@@ -149,18 +137,7 @@
   }
 
   async function remove() {
-    if (!sys) return
-    const ok = confirm(
-      `Delete "${sys.name}"?\n\nIts history is removed and the agent can only reconnect after being enrolled again.`,
-    )
-    if (!ok) return
-    try {
-      await api.remove(id)
-      await systems.refresh()
-      navigate('/')
-    } catch (err) {
-      actionError = err instanceof Error ? err.message : 'Delete failed'
-    }
+    if (sys && (await deleteSystem(sys))) navigate('/')
   }
 </script>
 
@@ -217,7 +194,6 @@
       {/if}
     </div>
     {#if actionError}<p class="mt-3 text-sm text-critical" role="alert">{actionError}</p>{/if}
-    {#if wakeNote}<p class="mt-3 text-sm text-ink-2" role="status">{wakeNote}</p>{/if}
     {#if sys.online && !canShell}
       <p class="mt-3 text-xs text-muted">
         Remote shell is off for this machine. To allow it, re-run the install command with
@@ -258,7 +234,11 @@
       {/each}
     </div>
     <span class="text-xs text-muted">
-      {range === 'live' ? 'Last 5 minutes, updated as samples arrive' : 'Refreshes every minute'}
+      {range === 'live'
+        ? 'Last 5 minutes, updated as samples arrive'
+        : range === '1h'
+          ? 'Refreshes every 20 seconds'
+          : 'Refreshes every minute'}
     </span>
   </div>
 
