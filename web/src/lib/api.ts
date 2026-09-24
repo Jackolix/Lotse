@@ -1,5 +1,11 @@
 // Typed client for the hub API. Types mirror internal/protocol and internal/hub.
 
+export interface NetInterface {
+  name: string
+  mac: string
+  addrs: string[]
+}
+
 export interface SystemInfo {
   hostname: string
   os: string
@@ -10,6 +16,7 @@ export interface SystemInfo {
   cpu_model: string
   cores: number
   mem_total: number
+  interfaces?: NetInterface[]
 }
 
 export interface Filesystem {
@@ -47,6 +54,8 @@ export interface System {
   online: boolean
   fingerprint: string
   info: SystemInfo
+  /** Features of the connected agent ("shell", "wake"); empty while offline. */
+  features: string[]
   agent_version: string
   last_seen: number
   created_at: number
@@ -72,12 +81,38 @@ export interface Enrollment {
 
 export interface User {
   username: string
+  totp: boolean
+  elevated_until: number
+}
+
+export interface TOTPSetup {
+  secret: string
+  uri: string
+  qr: string
+}
+
+export interface AuditEntry {
+  id: number
+  t: number
+  username: string
+  action: string
+  system_id?: number
+  system_name?: string
+  remote?: string
+  detail?: string
+}
+
+export interface WakeResult {
+  via: string
+  broadcast: string
+  macs: string[]
 }
 
 export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    public body: Record<string, unknown> = {},
   ) {
     super(message)
   }
@@ -97,14 +132,15 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   if (!res.ok) {
-    let message = res.statusText
+    let data: Record<string, unknown> = {}
     try {
-      message = (await res.json()).error ?? message
+      data = await res.json()
     } catch {
       // not JSON
     }
     if (res.status === 401 && path !== '/api/login') onUnauthorized()
-    throw new ApiError(res.status, message)
+    const message = typeof data.error === 'string' ? data.error : res.statusText
+    throw new ApiError(res.status, message.charAt(0).toUpperCase() + message.slice(1), data)
   }
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
@@ -113,7 +149,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 export const api = {
   setupNeeded: () => request<{ needed: boolean }>('GET', '/api/setup'),
   setup: (username: string, password: string) => request<User>('POST', '/api/setup', { username, password }),
-  login: (username: string, password: string) => request<User>('POST', '/api/login', { username, password }),
+  login: (username: string, password: string, code = '') =>
+    request<User>('POST', '/api/login', { username, password, code }),
   logout: () => request<void>('POST', '/api/logout'),
   me: () => request<User>('GET', '/api/me'),
   systems: () => request<System[]>('GET', '/api/systems'),
@@ -122,4 +159,13 @@ export const api = {
   remove: (id: number) => request<void>('DELETE', `/api/systems/${id}`),
   metrics: (id: number, range: RangeKey) => request<Series>('GET', `/api/systems/${id}/metrics?range=${range}`),
   enroll: () => request<Enrollment>('POST', '/api/enroll'),
+  wake: (id: number) => request<WakeResult>('POST', `/api/systems/${id}/wake`),
+  elevate: (password: string, code = '') =>
+    request<{ elevated_until: number }>('POST', '/api/elevate', { password, code }),
+  changePassword: (current: string, next: string) => request<void>('POST', '/api/me/password', { current, new: next }),
+  totpSetup: () => request<TOTPSetup>('POST', '/api/me/totp/setup'),
+  totpEnable: (secret: string, code: string, password: string) =>
+    request<void>('POST', '/api/me/totp/enable', { secret, code, password }),
+  totpDisable: (password: string, code: string) => request<void>('POST', '/api/me/totp/disable', { password, code }),
+  audit: (before = 0) => request<{ entries: AuditEntry[]; more: boolean }>('GET', `/api/audit?before=${before}&limit=50`),
 }

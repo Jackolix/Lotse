@@ -38,7 +38,7 @@ func main() {
 	case "version", "--version":
 		fmt.Println("hub", version.Version)
 	default:
-		fmt.Fprintf(os.Stderr, "usage: %s [serve | token [--ttl 1h] | healthcheck | version]\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "usage: %s [serve | token [--ttl 1h] [--allow-shell] | healthcheck | version]\n", os.Args[0])
 		os.Exit(2)
 	}
 	if err != nil {
@@ -63,6 +63,7 @@ func serve(cfg hub.Config) error {
 func token(cfg hub.Config, args []string) error {
 	fs := flag.NewFlagSet("token", flag.ExitOnError)
 	ttl := fs.Duration("ttl", time.Hour, "how long the token can enroll new agents")
+	allowShell := fs.Bool("allow-shell", false, "include --allow-shell in the printed install commands")
 	fs.Parse(args)
 
 	tok, expires, key, err := hub.CreateEnrollToken(cfg, *ttl)
@@ -73,7 +74,7 @@ func token(cfg hub.Config, args []string) error {
 	if hubURL == "" {
 		hubURL = "http://HUB-ADDRESS:8090"
 	}
-	cmds := hub.InstallCommands(hubURL, key, tok)
+	cmds := hub.InstallCommands(hubURL, key, tok, *allowShell)
 	fmt.Printf("Enrollment token (valid until %s):\n  %s\n\nHub key:\n  %s\n\n", expires.Format(time.DateTime), tok, key)
 	fmt.Printf("Linux / macOS:\n  %s\n\nWindows (elevated PowerShell):\n  %s\n", cmds["linux"], cmds["windows"])
 	if cfg.PublicURL == "" {

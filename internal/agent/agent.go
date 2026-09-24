@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -22,6 +23,7 @@ import (
 	"github.com/Jackolix/Lotse/internal/protocol"
 	"github.com/Jackolix/Lotse/internal/sshkey"
 	"github.com/Jackolix/Lotse/internal/version"
+	"github.com/Jackolix/Lotse/internal/wol"
 )
 
 const (
@@ -37,6 +39,7 @@ type Agent struct {
 	collector *collect.Collector
 	info      protocol.SystemInfo
 	log       *slog.Logger
+	shells    atomic.Int32 // open remote shells
 }
 
 func New(cfg *Config, log *slog.Logger) (*Agent, error) {
@@ -117,14 +120,14 @@ func (a *Agent) session(ctx context.Context) (connected bool, err error) {
 		return false, err
 	}
 	defer sconn.Close()
-	go protocol.RejectChannels(chans)
+	go a.handleChannels(chans)
 	go func() {
 		sconn.Wait()
 		cancel()
 	}()
 
 	intervals := make(chan time.Duration, 1)
-	go handleRequests(reqs, intervals)
+	go a.handleRequests(reqs, intervals)
 
 	interval, err := a.hello(sconn)
 	if err != nil {
@@ -157,7 +160,7 @@ func (a *Agent) handshake(conn net.Conn) (*ssh.ServerConn, <-chan ssh.NewChannel
 }
 
 func (a *Agent) hello(conn ssh.Conn) (time.Duration, error) {
-	msg := protocol.Hello{Protocol: protocol.Version, AgentVersion: version.Version, Token: a.cfg.Token, Info: a.info}
+	msg := protocol.Hello{Protocol: protocol.Version, AgentVersion: version.Version, Token: a.cfg.Token, Info: a.info, Features: a.features()}
 	ok, payload, err := protocol.Send(conn, protocol.ReqHello, true, msg, requestTimeout)
 	if err != nil {
 		return 0, fmt.Errorf("hello: %w", err)
@@ -207,9 +210,31 @@ func (a *Agent) report(ctx context.Context, conn ssh.Conn, interval time.Duratio
 	}
 }
 
-func handleRequests(reqs <-chan *ssh.Request, intervals chan time.Duration) {
+// features tells the hub what this agent may do. The shell is opt-in per machine.
+func (a *Agent) features() []string {
+	f := []string{protocol.FeatureWake}
+	if a.cfg.AllowShell {
+		f = append(f, protocol.FeatureShell)
+	}
+	return f
+}
+
+func (a *Agent) handleRequests(reqs <-chan *ssh.Request, intervals chan time.Duration) {
 	for req := range reqs {
 		switch req.Type {
+		case protocol.ReqWake:
+			var msg protocol.WakeMsg
+			if err := json.Unmarshal(req.Payload, &msg); err != nil || !wol.IsLocalBroadcast(msg.Broadcast) {
+				req.Reply(false, nil)
+				continue
+			}
+			err := wol.Send(msg.MACs, msg.Broadcast)
+			if err != nil {
+				a.log.Warn("sending wake-on-lan packet failed", "err", err)
+			} else {
+				a.log.Info("sent wake-on-lan packet", "macs", msg.MACs, "broadcast", msg.Broadcast)
+			}
+			req.Reply(err == nil, nil)
 		case protocol.ReqInterval:
 			var msg protocol.IntervalMsg
 			if err := json.Unmarshal(req.Payload, &msg); err != nil || msg.Seconds <= 0 {

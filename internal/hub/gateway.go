@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -24,9 +25,28 @@ const handshakeTimeout = 15 * time.Second
 const maxFilesystems = 32
 
 type agentConn struct {
-	id     int64
-	conn   ssh.Conn
-	remote string
+	id       int64
+	name     string
+	conn     ssh.Conn
+	remote   string
+	info     protocol.SystemInfo
+	features []string
+}
+
+func (ac *agentConn) has(feature string) bool {
+	return slices.Contains(ac.features, feature)
+}
+
+// inNetwork reports whether the agent has an address inside n.
+func (ac *agentConn) inNetwork(n *net.IPNet) bool {
+	for _, iface := range ac.info.Interfaces {
+		for _, addr := range iface.Addrs {
+			if ip, _, err := net.ParseCIDR(addr); err == nil && n.Contains(ip) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (ac *agentConn) setInterval(seconds int) {
@@ -103,11 +123,11 @@ func (h *Hub) serveAgent(ctx context.Context, conn net.Conn, remote string) erro
 		return fmt.Errorf("refused: %w", err)
 	}
 
-	ac := &agentConn{id: sys.ID, conn: sc, remote: remote}
+	ac := &agentConn{id: sys.ID, name: sys.Name, conn: sc, remote: remote, info: hello.Info, features: hello.Features}
 	interval := h.register(ac)
 	defer h.unregister(ac)
 	protocol.Reply(req, true, protocol.HelloReply{OK: true, Interval: interval})
-	h.log.Info("agent connected", "system", sys.Name, "id", sys.ID, "remote", remote, "agent_version", hello.AgentVersion)
+	h.log.Info("agent connected", "system", sys.Name, "id", sys.ID, "remote", remote, "agent_version", hello.AgentVersion, "features", hello.Features)
 
 	watchdog := time.NewTicker(30 * time.Second)
 	defer watchdog.Stop()
@@ -192,6 +212,7 @@ func (h *Hub) admit(fingerprint string, hello *protocol.Hello) (*store.System, e
 		return nil, errors.New("internal error")
 	}
 	h.log.Info("enrolled new system", "system", sys.Name, "id", sys.ID, "fingerprint", fingerprint)
+	h.audit(nil, "", "system_enrolled", sys, "agent key "+fingerprint)
 	h.broker.publish("systems", nil)
 	return sys, nil
 }

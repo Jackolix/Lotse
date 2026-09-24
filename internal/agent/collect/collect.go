@@ -4,6 +4,7 @@ package collect
 
 import (
 	"fmt"
+	stdnet "net"
 	"os"
 	"runtime"
 	"sort"
@@ -61,7 +62,38 @@ func Info() protocol.SystemInfo {
 	if vm, err := mem.VirtualMemory(); err == nil {
 		info.MemTotal = vm.Total
 	}
+	info.Interfaces = interfaces()
 	return info
+}
+
+// interfaces lists physical interfaces that have an address. The hub uses their
+// MACs and subnets for Wake-on-LAN.
+func interfaces() []protocol.NetInterface {
+	ifaces, err := stdnet.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var out []protocol.NetInterface
+	for _, i := range ifaces {
+		if i.Flags&stdnet.FlagLoopback != 0 || len(i.HardwareAddr) != 6 || virtualInterface(i.Name) {
+			continue
+		}
+		addrs, _ := i.Addrs()
+		var cidrs []string
+		for _, a := range addrs {
+			if ipn, ok := a.(*stdnet.IPNet); ok && !ipn.IP.IsLinkLocalUnicast() {
+				cidrs = append(cidrs, ipn.String())
+			}
+		}
+		if len(cidrs) == 0 {
+			continue
+		}
+		out = append(out, protocol.NetInterface{Name: i.Name, MAC: i.HardwareAddr.String(), Addrs: cidrs})
+		if len(out) == 16 {
+			break
+		}
+	}
+	return out
 }
 
 // Sample reads current metrics. Rates cover the time since the previous call.

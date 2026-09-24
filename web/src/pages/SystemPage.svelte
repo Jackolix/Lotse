@@ -32,6 +32,8 @@
   let renaming = $state(false)
   let newName = $state('')
   let actionError = $state('')
+  let wakeNote = $state('')
+  let waking = $state(false)
 
   const sys = $derived(systems.get(id))
   const m = $derived(sys?.metrics ?? null)
@@ -105,6 +107,28 @@
   const memMax = $derived(Math.max(memTotal, maxOf(series?.values.swap_used)))
   const diskMax = $derived(Math.max(m?.disk_total ?? 0, maxOf(series?.values.disk_total)))
   const isWindows = $derived(sys?.info.os === 'windows')
+  const canShell = $derived(!!sys?.online && sys.features.includes('shell'))
+  const macs = $derived([...new Set((sys?.info.interfaces ?? []).map((i) => i.mac))])
+  const ipv4 = $derived(
+    (sys?.info.interfaces ?? []).flatMap((i) => i.addrs).find((a) => /^\d+\.\d+\.\d+\.\d+\//.test(a))?.split('/')[0],
+  )
+
+  async function wake() {
+    waking = true
+    wakeNote = ''
+    actionError = ''
+    try {
+      const r = await api.wake(id)
+      wakeNote =
+        r.via === 'hub'
+          ? `Magic packet sent by the hub to ${r.broadcast}. No online agent shares a network with this machine, so it only arrives if the hub runs with host networking.`
+          : `Magic packet sent via ${r.via} to ${r.broadcast}. The machine should come online within a minute if Wake-on-LAN is enabled.`
+    } catch (err) {
+      actionError = err instanceof Error ? err.message : 'Wake-on-LAN failed'
+    } finally {
+      waking = false
+    }
+  }
   const load2 = (v: number) => v.toFixed(2)
 
   function startRename() {
@@ -171,21 +195,45 @@
         </div>
       </div>
       {#if !renaming}
-        <div class="flex gap-2">
+        <div class="flex flex-wrap gap-2">
+          {#if sys.online}
+            {#if canShell}
+              <a class="btn btn-primary" href="/systems/{id}/terminal" onclick={link}><Icon name="terminal" size={14} /> Terminal</a>
+            {:else}
+              <button
+                class="btn"
+                disabled
+                title="Remote shell is disabled on this machine. Reinstall the agent with --allow-shell to enable it."
+              >
+                <Icon name="terminal" size={14} /> Terminal
+              </button>
+            {/if}
+          {:else if macs.length}
+            <button class="btn btn-primary" onclick={wake} disabled={waking}><Icon name="power" size={14} /> Wake</button>
+          {/if}
           <button class="btn" onclick={startRename}><Icon name="pencil" size={14} /> Rename</button>
           <button class="btn btn-danger" onclick={remove}><Icon name="trash" size={14} /> Delete</button>
         </div>
       {/if}
     </div>
     {#if actionError}<p class="mt-3 text-sm text-critical" role="alert">{actionError}</p>{/if}
+    {#if wakeNote}<p class="mt-3 text-sm text-ink-2" role="status">{wakeNote}</p>{/if}
+    {#if sys.online && !canShell}
+      <p class="mt-3 text-xs text-muted">
+        Remote shell is off for this machine. To allow it, re-run the install command with
+        <code class="font-mono">--allow-shell</code> (Windows: <code class="font-mono">-AllowShell</code>).
+      </p>
+    {/if}
 
-    <dl class="mt-5 grid grid-cols-2 gap-x-6 gap-y-4 text-sm sm:grid-cols-3 lg:grid-cols-6">
+    <dl class="mt-5 grid grid-cols-2 gap-x-6 gap-y-4 text-sm sm:grid-cols-4">
       {#each [
         ['Operating system', osLabel(sys.info)],
         ['Kernel', sys.info.kernel || '–'],
         ['CPU', `${sys.info.cpu_model || archLabel(sys.info.arch)} · ${sys.info.cores} threads`],
         ['Memory', bytes(memTotal)],
         ['Hostname', sys.info.hostname],
+        ['IP address', ipv4 ?? '–'],
+        ['MAC address', macs.join(', ') || '–'],
         ['Agent', sys.agent_version],
       ] as [label, value] (label)}
         <div class="min-w-0">

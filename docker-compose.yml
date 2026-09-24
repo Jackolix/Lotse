@@ -12,7 +12,11 @@ services:
       # Address agents use to reach the hub, pre-filled in the "Add system" dialog.
       # Leave empty to use whatever address the browser used to open the UI.
       HUB_URL: ""
-    # Limits: the hub idles at ~20-30 MB; this leaves room for spikes.
+    # Wake-on-LAN normally goes through an agent on the target's subnet. Only if no
+    # such agent exists does the hub broadcast itself, which needs host networking
+    # (Linux only): uncomment the next line and remove "ports".
+    # network_mode: host
+    # Limits: the hub idles at ~10-15 MB; this leaves room for spikes.
     mem_limit: 256m
     cpus: 1.0
 

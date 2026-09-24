@@ -18,6 +18,10 @@ type Config struct {
 	HubKey string `json:"hub_key"`         // the hub's public key, authorized_keys format
 	Token  string `json:"token,omitempty"` // enrollment token; cleared after the hub accepts this agent
 
+	// AllowShell lets hub admins open a root/SYSTEM shell on this machine. Off by
+	// default; only someone with local admin rights can turn it on.
+	AllowShell bool `json:"allow_shell"`
+
 	path string
 }
 
@@ -56,8 +60,8 @@ func LoadConfig(path string) (*Config, error) {
 	return c, c.Validate()
 }
 
-func NewConfig(path, hubURL, hubKey, token string) (*Config, error) {
-	c := &Config{HubURL: hubURL, HubKey: hubKey, Token: token, path: path}
+func NewConfig(path, hubURL, hubKey, token string, allowShell bool) (*Config, error) {
+	c := &Config{HubURL: hubURL, HubKey: hubKey, Token: token, AllowShell: allowShell, path: path}
 	return c, c.Validate()
 }
 

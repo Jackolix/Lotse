@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/Jackolix/Lotse/internal/agent"
 	"github.com/Jackolix/Lotse/internal/hub/store"
 	"github.com/Jackolix/Lotse/internal/protocol"
@@ -40,9 +42,13 @@ func newTestHub(t *testing.T) (*Hub, *httptest.Server) {
 
 // startAgent runs a real agent against the test hub and returns its config path.
 func startAgent(t *testing.T, hubURL, hubKey, token string) (*agent.Agent, string) {
+	return startAgentWith(t, hubURL, hubKey, token, false)
+}
+
+func startAgentWith(t *testing.T, hubURL, hubKey, token string, allowShell bool) (*agent.Agent, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "agent.json")
-	cfg, err := agent.NewConfig(path, hubURL, hubKey, token)
+	cfg, err := agent.NewConfig(path, hubURL, hubKey, token, allowShell)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,6 +81,48 @@ func waitFor(t *testing.T, what string, timeout time.Duration, cond func() bool)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+// enroll starts an agent with a fresh token and waits until it is online.
+func enroll(t *testing.T, h *Hub, srv *httptest.Server, allowShell bool) *store.System {
+	t.Helper()
+	token := randomToken()
+	if err := h.store.CreateEnrollToken(hashToken(token), time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := startAgentWith(t, srv.URL, h.PublicKey(), token, allowShell)
+	var sys *store.System
+	waitFor(t, "agent online", 10*time.Second, func() bool {
+		s, err := h.store.SystemByFingerprint(a.Fingerprint())
+		if err == nil && h.online(s.ID) {
+			sys = s
+			return true
+		}
+		return false
+	})
+	return sys
+}
+
+const testPassword = "correct horse battery"
+
+// newSession creates a user (once) and a logged-in session, returning its cookie value.
+func newSession(t *testing.T, h *Hub, elevated bool) (string, *store.User) {
+	t.Helper()
+	u, err := h.store.UserByName("admin")
+	if err != nil {
+		hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+		if u, err = h.store.CreateUser("admin", string(hash)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	token := randomToken()
+	if err := h.store.CreateSession(hashToken(token), u.ID, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if elevated {
+		h.store.ElevateSession(hashToken(token), time.Now().Add(time.Minute))
+	}
+	return token, u
 }
 
 func (h *Hub) online(id int64) bool {
@@ -134,7 +182,7 @@ func TestAgentEnrollsAndReports(t *testing.T) {
 	// Deleting the system drops the link, and the agent cannot silently re-enroll.
 	req := httptest.NewRequest(http.MethodDelete, "/", nil)
 	req.SetPathValue("id", strconv.FormatInt(sys.ID, 10))
-	h.deleteSystem(httptest.NewRecorder(), req, &store.User{Username: "test"})
+	h.deleteSystem(httptest.NewRecorder(), req, &store.Session{User: store.User{Username: "test"}})
 	time.Sleep(2 * time.Second)
 	if systems, _ := h.store.Systems(); len(systems) != 0 {
 		t.Errorf("deleted system came back: %d systems", len(systems))

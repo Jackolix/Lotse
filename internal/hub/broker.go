@@ -65,7 +65,7 @@ func (b *broker) publish(event string, data any) {
 
 // handleEvents streams events to the browser: "metrics" for every sample, "status"
 // when an agent connects or disconnects, "systems" when the list changed.
-func (h *Hub) handleEvents(w http.ResponseWriter, r *http.Request, _ *store.User) {
+func (h *Hub) handleEvents(w http.ResponseWriter, r *http.Request, _ *store.Session) {
 	rc := http.NewResponseController(w)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")

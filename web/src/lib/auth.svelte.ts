@@ -26,6 +26,15 @@ export function signedIn(user: User) {
   auth.setupNeeded = false
 }
 
+/** Re-reads the account (e.g. after enabling two-factor login). */
+export async function refreshUser() {
+  try {
+    auth.user = await api.me()
+  } catch {
+    // 401 handled globally
+  }
+}
+
 export async function signOut() {
   try {
     await api.logout()

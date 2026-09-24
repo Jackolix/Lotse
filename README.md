@@ -1,7 +1,7 @@
 # Lotse
 
 A lightweight, self-hosted monitoring hub for Linux, macOS and Windows machines, in the spirit of
-[Beszel](https://github.com/henrygd/beszel), built to later support remote actions such as a shell.
+[Beszel](https://github.com/henrygd/beszel), that can also act on them: a browser terminal and Wake-on-LAN.
 
 - **Hub**: one Go binary in a Docker container. It includes the web UI, stores data in SQLite, and serves
   the agent installers. Idles at under 10 MB RAM.
@@ -11,17 +11,18 @@ A lightweight, self-hosted monitoring hub for Linux, macOS and Windows machines,
 ## Architecture
 
 ```
-Browser ──HTTP + SSE──▶ Hub (Docker) ◀──wss/ws, SSH inside── Agent (Linux / macOS / Windows)
-                        ├─ REST API + embedded Svelte UI
-                        ├─ SQLite: users, systems, metrics (1m / 10m / 1h rollups)
-                        └─ /install.sh, /install.ps1, /download/<agent>
+Browser ──HTTP, SSE, WebSocket──▶ Hub (Docker) ◀──wss/ws, SSH inside── Agent (Linux / macOS / Windows)
+  xterm.js terminal              ├─ REST API + embedded Svelte UI           PTY / ConPTY shell
+                                 ├─ SQLite: users, systems, metrics,        Wake-on-LAN relay
+                                 │  audit log
+                                 └─ /install.sh, /install.ps1, /download/<agent>
 ```
 
 - **Agents dial out** to the hub over a WebSocket. Clients need no open ports, and this works behind NAT and
   reverse proxies.
 - **SSH inside the WebSocket.** The agent is the SSH server and the hub the SSH client. Each side pins the
-  other's Ed25519 key, so the link is authenticated and encrypted even over plain `ws://`. The remote shell
-  and file transfer planned for Phase 2 will use standard SSH channels (PTY requests, SFTP).
+  other's Ed25519 key, so the link is authenticated and encrypted even over plain `ws://`. Metrics and
+  control messages are SSH global requests; each terminal is a standard SSH session channel with a PTY.
 - **Adaptive reporting.** Agents report every 60 s. While someone has the UI open, the hub switches them to
   every 2 s, and switches back 15 s after the last viewer leaves.
 - **Storage.** 1-minute averages are kept for 48 h, 10-minute averages for 31 days and 1-hour averages for
@@ -30,9 +31,10 @@ Browser ──HTTP + SSE──▶ Hub (Docker) ◀──wss/ws, SSH inside──
 ```
 cmd/hub, cmd/agent          entry points
 internal/protocol           hub ⇄ agent messages
-internal/agent              connection loop, config, collect/ (gopsutil)
-internal/hub                HTTP API, auth, agent gateway, live state, event stream
-internal/hub/store          SQLite schema, metrics rollups
+internal/agent              connection loop, config, shell (go-pty), collect/ (gopsutil)
+internal/hub                HTTP API, auth + TOTP, agent gateway, terminal bridge, wake, audit, event stream
+internal/hub/store          SQLite schema, metrics rollups, audit log
+internal/wol                magic packets
 web/                        Svelte 5 + Vite + Tailwind + uPlot, embedded into the hub
 ```
 
@@ -68,7 +70,7 @@ once the hub has accepted it.
 Tokens can also be created without the UI, e.g. for Ansible:
 
 ```sh
-docker exec lotse-hub /app/hub token --ttl 2h
+docker exec lotse-hub /app/hub token --ttl 2h [--allow-shell]
 ```
 
 | OS      | Binary                             | Config and key                                  | Logs                                 |
@@ -80,14 +82,47 @@ docker exec lotse-hub /app/hub token --ttl 2h
 To remove an agent, run `sudo lotse-agent uninstall --purge` (or the same command in an elevated
 PowerShell), then delete the binary.
 
+## Remote shell
+
+Open a system and click **Terminal**. You get a full terminal in the browser: bash/zsh on Linux and macOS,
+PowerShell on Windows 10 1809 or newer (via ConPTY). The shell runs as the agent's user, which is root or SYSTEM.
+
+- **Opt-in on each machine.** An agent only accepts shells if it was installed with `--allow-shell`
+  (Windows: `-AllowShell`, or tick "Allow remote shell" in the Add system dialog). The setting lives in the
+  agent's config, which only a local admin can edit. A compromised hub cannot turn it on.
+  To change it on an installed machine, re-run the install command with or without the flag.
+- **Re-authentication.** Opening a shell asks for your password again, plus your two-factor code if it's on.
+  That unlocks shells for 10 minutes, like `sudo`.
+- **Audit.** Every shell is logged under **Activity** with user, source IP, duration, bytes and exit status.
+  Keystrokes and output are not recorded. Signing out closes your open shells.
+
+## Wake-on-LAN
+
+Offline systems get a **Wake** button. Agents 0.2+ report their network interfaces (MAC address and subnet).
+The hub remembers them after a machine goes offline.
+
+Broadcasts don't cross routers or leave a Docker bridge network, so the hub asks an **online agent in the same
+subnet** to send the magic packet. If no agent shares the subnet, the hub sends it itself. That only reaches your
+LAN when the hub runs with `network_mode: host` (Linux hosts only; see `docker-compose.yml`).
+
+The target must have Wake-on-LAN enabled in its BIOS/UEFI and network driver. It usually only works over wired
+Ethernet.
+
 ## Security model
 
-- The web UI uses bcrypt passwords, HttpOnly `SameSite=Strict` session cookies, an Origin check on every
-  write, a strict CSP, and a 5-minute lockout after 5 failed logins per IP.
+- The web UI uses bcrypt passwords, optional TOTP two-factor login (codes can't be reused), HttpOnly
+  `SameSite=Strict` session cookies, an Origin check on every write and WebSocket, a strict CSP, and a 5-minute
+  lockout after 5 failed logins or re-authentications per IP.
+- Opening a shell needs a re-authentication within the last 10 minutes. Changing your password signs out all
+  other sessions.
+- The activity log records sign-ins (including failed ones), password confirmations, shells, Wake-on-LAN and
+  changes to systems. It is kept for a year.
 - Agents only accept the hub key pinned at install time. The hub only accepts agents whose key it has
   enrolled, or that present a valid, unexpired enrollment token.
 - Session and enrollment tokens are stored as SHA-256 hashes.
 - Deleting a system in the UI drops its connection. The agent cannot rejoin without a new token.
+- Agents refuse shells unless installed with `--allow-shell`. They send Wake-on-LAN packets only to the broadcast
+  addresses of their own networks.
 - The install command fetches the installer over whatever scheme the hub URL uses. On an untrusted network,
   put the hub behind HTTPS (Caddy, Traefik) and set `HUB_URL=https://…`.
 
@@ -112,7 +147,8 @@ lotse-agent run --config ./dev/agent.json
 ## Roadmap
 
 1. ~~MVP: hub, agents, enrollment, CPU/memory/disk/network/load, dashboard, Docker image~~
-2. Remote shell (xterm.js ⇄ hub ⇄ SSH channel ⇄ PTY/ConPTY), audit log, TOTP/passkeys, re-authentication
-   before opening a shell, agent-side `allow_shell` switch
+2. ~~Remote shell (xterm.js ⇄ hub ⇄ SSH channel ⇄ PTY/ConPTY), agent-side opt-in, re-authentication, TOTP,
+   audit log, Wake-on-LAN via relay agents~~
 3. Alerts (thresholds, offline) via ntfy, Telegram, Discord or e-mail; Docker container stats; processes
-4. Saved scripts across hosts, file transfer (SFTP), signed agent self-update, reboot and service actions
+4. Saved scripts across hosts, file transfer (SFTP), signed agent self-update, reboot and service actions,
+   passkeys, more users with roles

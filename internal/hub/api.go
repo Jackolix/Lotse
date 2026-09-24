@@ -3,6 +3,7 @@ package hub
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"net/url"
@@ -26,12 +27,20 @@ func (h *Hub) Handler() http.Handler {
 	mux.HandleFunc("POST /api/login", h.postLogin)
 	mux.HandleFunc("POST /api/logout", h.postLogout)
 	mux.HandleFunc("GET /api/me", h.requireUser(h.getMe))
+	mux.HandleFunc("POST /api/me/password", h.requireUser(h.postPassword))
+	mux.HandleFunc("POST /api/me/totp/setup", h.requireUser(h.postTOTPSetup))
+	mux.HandleFunc("POST /api/me/totp/enable", h.requireUser(h.postTOTPEnable))
+	mux.HandleFunc("POST /api/me/totp/disable", h.requireUser(h.postTOTPDisable))
+	mux.HandleFunc("POST /api/elevate", h.requireUser(h.postElevate))
+	mux.HandleFunc("GET /api/audit", h.requireUser(h.getAudit))
 	mux.HandleFunc("GET /api/events", h.requireUser(h.handleEvents))
 	mux.HandleFunc("GET /api/systems", h.requireUser(h.getSystems))
 	mux.HandleFunc("GET /api/systems/{id}", h.requireUser(h.getSystem))
 	mux.HandleFunc("PATCH /api/systems/{id}", h.requireUser(h.patchSystem))
 	mux.HandleFunc("DELETE /api/systems/{id}", h.requireUser(h.deleteSystem))
 	mux.HandleFunc("GET /api/systems/{id}/metrics", h.requireUser(h.getMetrics))
+	mux.HandleFunc("GET /api/systems/{id}/shell", h.requireUser(h.handleShell))
+	mux.HandleFunc("POST /api/systems/{id}/wake", h.requireUser(h.postWake))
 	mux.HandleFunc("POST /api/enroll", h.requireUser(h.postEnroll))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
@@ -83,6 +92,7 @@ type systemDTO struct {
 	Online       bool                `json:"online"`
 	Fingerprint  string              `json:"fingerprint"`
 	Info         protocol.SystemInfo `json:"info"`
+	Features     []string            `json:"features"` // of the connected agent; empty while offline
 	AgentVersion string              `json:"agent_version"`
 	LastSeen     int64               `json:"last_seen"`
 	CreatedAt    int64               `json:"created_at"`
@@ -96,8 +106,11 @@ func (h *Hub) toDTO(s *store.System) systemDTO {
 	}
 	_ = json.Unmarshal([]byte(s.Info), &d.Info)
 
+	d.Features = []string{}
 	h.mu.Lock()
-	_, d.Online = h.agents[s.ID]
+	if ac := h.agents[s.ID]; ac != nil {
+		d.Online, d.Features = true, ac.features
+	}
 	st := h.states[s.ID]
 	h.mu.Unlock()
 	if st != nil {
@@ -116,7 +129,7 @@ func (h *Hub) toDTO(s *store.System) systemDTO {
 	return d
 }
 
-func (h *Hub) getSystems(w http.ResponseWriter, _ *http.Request, _ *store.User) {
+func (h *Hub) getSystems(w http.ResponseWriter, _ *http.Request, _ *store.Session) {
 	systems, err := h.store.Systems()
 	if err != nil {
 		h.internalError(w, err)
@@ -129,7 +142,7 @@ func (h *Hub) getSystems(w http.ResponseWriter, _ *http.Request, _ *store.User) 
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (h *Hub) getSystem(w http.ResponseWriter, r *http.Request, _ *store.User) {
+func (h *Hub) getSystem(w http.ResponseWriter, r *http.Request, _ *store.Session) {
 	sys, ok := h.lookupSystem(w, r)
 	if !ok {
 		return
@@ -137,7 +150,7 @@ func (h *Hub) getSystem(w http.ResponseWriter, r *http.Request, _ *store.User) {
 	writeJSON(w, http.StatusOK, h.toDTO(sys))
 }
 
-func (h *Hub) patchSystem(w http.ResponseWriter, r *http.Request, _ *store.User) {
+func (h *Hub) patchSystem(w http.ResponseWriter, r *http.Request, s *store.Session) {
 	sys, ok := h.lookupSystem(w, r)
 	if !ok {
 		return
@@ -157,14 +170,20 @@ func (h *Hub) patchSystem(w http.ResponseWriter, r *http.Request, _ *store.User)
 		h.internalError(w, err)
 		return
 	}
+	h.audit(r, s.Username, "system_renamed", sys, fmt.Sprintf("renamed from %q to %q", sys.Name, name))
 	sys.Name = name
+	h.mu.Lock()
+	if ac := h.agents[sys.ID]; ac != nil {
+		ac.name = name
+	}
+	h.mu.Unlock()
 	h.broker.publish("systems", nil)
 	writeJSON(w, http.StatusOK, h.toDTO(sys))
 }
 
 // deleteSystem forgets a system and drops its agent link. The agent cannot rejoin
 // without a new enrollment token.
-func (h *Hub) deleteSystem(w http.ResponseWriter, r *http.Request, u *store.User) {
+func (h *Hub) deleteSystem(w http.ResponseWriter, r *http.Request, s *store.Session) {
 	sys, ok := h.lookupSystem(w, r)
 	if !ok {
 		return
@@ -181,7 +200,8 @@ func (h *Hub) deleteSystem(w http.ResponseWriter, r *http.Request, u *store.User
 		h.internalError(w, err)
 		return
 	}
-	h.log.Info("system deleted", "system", sys.Name, "id", sys.ID, "by", u.Username)
+	h.log.Info("system deleted", "system", sys.Name, "id", sys.ID, "by", s.Username)
+	h.audit(r, s.Username, "system_deleted", sys, "")
 	h.broker.publish("systems", nil)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -241,7 +261,7 @@ func (f jsonFloat) MarshalJSON() ([]byte, error) {
 	return strconv.AppendFloat(nil, math.Round(v*100)/100, 'f', -1, 64), nil
 }
 
-func (h *Hub) getMetrics(w http.ResponseWriter, r *http.Request, _ *store.User) {
+func (h *Hub) getMetrics(w http.ResponseWriter, r *http.Request, _ *store.Session) {
 	sys, ok := h.lookupSystem(w, r)
 	if !ok {
 		return
@@ -308,14 +328,15 @@ type enrollDTO struct {
 }
 
 // postEnroll creates a token that enrolls any number of agents until it expires.
-func (h *Hub) postEnroll(w http.ResponseWriter, r *http.Request, u *store.User) {
+func (h *Hub) postEnroll(w http.ResponseWriter, r *http.Request, s *store.Session) {
 	token := randomToken()
 	expires := time.Now().Add(enrollTTL)
 	if err := h.store.CreateEnrollToken(hashToken(token), expires); err != nil {
 		h.internalError(w, err)
 		return
 	}
-	h.log.Info("enrollment token created", "by", u.Username, "expires", expires.Format(time.RFC3339))
+	h.log.Info("enrollment token created", "by", s.Username, "expires", expires.Format(time.RFC3339))
+	h.audit(r, s.Username, "token_created", nil, "valid until "+expires.Format(time.DateTime))
 	writeJSON(w, http.StatusOK, enrollDTO{Token: token, ExpiresAt: expires.Unix(), HubURL: h.publicURL(r), HubKey: h.PublicKey()})
 }
 

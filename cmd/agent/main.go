@@ -54,7 +54,8 @@ func main() {
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `Usage:
-  %[1]s install --hub URL --key KEY --token TOKEN   install and start the system service
+  %[1]s install --hub URL --key KEY --token TOKEN [--allow-shell]
+                                                  install and start the system service
   %[1]s run [--config PATH]                         run in the foreground
   %[1]s uninstall [--purge]                         stop and remove the service
   %[1]s version
@@ -150,13 +151,14 @@ func cmdInstall(args []string) error {
 	hub := fs.String("hub", "", "hub URL, e.g. http://hub.lan:8090")
 	key := fs.String("key", "", "hub public key (ssh-ed25519 ...)")
 	token := fs.String("token", "", "enrollment token from the hub's \"Add system\" dialog")
+	allowShell := fs.Bool("allow-shell", false, "let hub admins open a remote shell (as root/SYSTEM) on this machine")
 	cfgPath := fs.String("config", agent.DefaultConfigPath(), "config file")
 	fs.Parse(args)
 
 	if err := requireAdmin(); err != nil {
 		return err
 	}
-	cfg, err := agent.NewConfig(*cfgPath, *hub, *key, *token)
+	cfg, err := agent.NewConfig(*cfgPath, *hub, *key, *token, *allowShell)
 	if err != nil {
 		return err
 	}
@@ -185,8 +187,12 @@ func cmdInstall(args []string) error {
 	if err := s.Start(); err != nil {
 		return fmt.Errorf("start service: %w", err)
 	}
-	fmt.Printf("%s %s installed and running.\n  config:      %s\n  fingerprint: %s\n",
-		version.AgentName, version.Version, cfg.Path(), ssh.FingerprintSHA256(signer.PublicKey()))
+	shell := "disabled (reinstall with --allow-shell to enable)"
+	if cfg.AllowShell {
+		shell = "enabled"
+	}
+	fmt.Printf("%s %s installed and running.\n  config:       %s\n  fingerprint:  %s\n  remote shell: %s\n",
+		version.AgentName, version.Version, cfg.Path(), ssh.FingerprintSHA256(signer.PublicKey()), shell)
 	return nil
 }
 

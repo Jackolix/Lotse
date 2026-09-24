@@ -64,9 +64,13 @@ type Hub struct {
 	setupMu sync.Mutex
 	agentWG sync.WaitGroup
 
+	totpMu   sync.Mutex
+	totpUsed map[int64]int64 // last accepted TOTP time step per user, against replays
+
 	mu        sync.Mutex
 	agents    map[int64]*agentConn // connected agents by system ID
 	states    map[int64]*sysState
+	shells    map[*shellSession]struct{}
 	live      bool // agents currently report at liveInterval
 	idleTimer *time.Timer
 }
@@ -77,13 +81,15 @@ func New(cfg Config, log *slog.Logger) (*Hub, error) {
 		return nil, err
 	}
 	h := &Hub{
-		cfg:     cfg,
-		log:     log,
-		store:   st,
-		signer:  signer,
-		limiter: newLoginLimiter(),
-		agents:  map[int64]*agentConn{},
-		states:  map[int64]*sysState{},
+		cfg:      cfg,
+		log:      log,
+		store:    st,
+		signer:   signer,
+		limiter:  newLoginLimiter(),
+		totpUsed: map[int64]int64{},
+		agents:   map[int64]*agentConn{},
+		states:   map[int64]*sysState{},
+		shells:   map[*shellSession]struct{}{},
 	}
 	h.broker = newBroker(h.viewersChanged)
 	return h, nil
@@ -191,6 +197,9 @@ func (h *Hub) prune() {
 	}
 	if err := h.store.DeleteExpired(); err != nil {
 		h.log.Error("deleting expired sessions failed", "err", err)
+	}
+	if err := h.store.PruneAudit(time.Now()); err != nil {
+		h.log.Error("pruning audit log failed", "err", err)
 	}
 }
 

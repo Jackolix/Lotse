@@ -4,7 +4,7 @@
 // stream the agent runs an SSH server and the hub acts as the SSH client. Each side
 // pins the other's Ed25519 key, so the link is mutually authenticated and encrypted
 // even over plain ws://. The messages below travel as SSH global requests with JSON
-// payloads; later phases add SSH channels for shells and file transfer.
+// payloads. Remote shells use standard SSH "session" channels (RFC 4254).
 package protocol
 
 // Version is bumped on incompatible changes to the messages below.
@@ -21,6 +21,17 @@ const (
 	ReqMetrics = "metrics"
 	// ReqInterval tells the agent how often to report (hub to agent). Payload IntervalMsg.
 	ReqInterval = "interval"
+	// ReqWake asks the agent to broadcast Wake-on-LAN magic packets (hub to agent, want reply). Payload WakeMsg.
+	ReqWake = "wake"
+)
+
+// Optional agent features, announced in Hello.Features.
+const (
+	// FeatureShell: the agent accepts "session" channels with a PTY. Off unless the
+	// machine's owner installed the agent with --allow-shell.
+	FeatureShell = "shell"
+	// FeatureWake: the agent can relay Wake-on-LAN packets into its networks.
+	FeatureWake = "wake"
 )
 
 type Hello struct {
@@ -28,6 +39,7 @@ type Hello struct {
 	AgentVersion string     `json:"agent_version"`
 	Token        string     `json:"token,omitempty"` // enrollment token, only needed until the hub knows this agent's key
 	Info         SystemInfo `json:"info"`
+	Features     []string   `json:"features,omitempty"`
 }
 
 type HelloReply struct {
@@ -47,6 +59,16 @@ type SystemInfo struct {
 	CPUModel        string `json:"cpu_model"`
 	Cores           int    `json:"cores"`
 	MemTotal        uint64 `json:"mem_total"`
+
+	// Interfaces are the physical network interfaces; the hub keeps them to wake
+	// the machine once it is offline.
+	Interfaces []NetInterface `json:"interfaces,omitempty"`
+}
+
+type NetInterface struct {
+	Name  string   `json:"name"`
+	MAC   string   `json:"mac"`
+	Addrs []string `json:"addrs"` // CIDR notation, e.g. 192.168.1.20/24
 }
 
 // Metrics is one sample. JSON keys match the hub's metric column names so the web UI
@@ -83,3 +105,30 @@ type Filesystem struct {
 type IntervalMsg struct {
 	Seconds int `json:"seconds"`
 }
+
+// WakeMsg asks a relay agent to send magic packets for MACs to a broadcast address.
+type WakeMsg struct {
+	MACs      []string `json:"macs"`
+	Broadcast string   `json:"broadcast"` // e.g. 192.168.1.255
+}
+
+// SSH payloads for "session" channels, encoded with ssh.Marshal (RFC 4254 section 6).
+type (
+	PtyRequest struct {
+		Term    string
+		Columns uint32
+		Rows    uint32
+		Width   uint32
+		Height  uint32
+		Modes   string
+	}
+	WindowChange struct {
+		Columns uint32
+		Rows    uint32
+		Width   uint32
+		Height  uint32
+	}
+	ExitStatus struct {
+		Status uint32
+	}
+)

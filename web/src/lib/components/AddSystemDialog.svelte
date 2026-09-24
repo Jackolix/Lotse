@@ -19,6 +19,7 @@
   let hubUrl = $state('')
   let os = $state<OS>(guessOS())
   let copied = $state(false)
+  let allowShell = $state(false)
   let knownIds = $state.raw(new Set<number>())
 
   $effect(() => {
@@ -59,9 +60,11 @@
     if (!enrollment) return ''
     const { hub_key: key, token } = enrollment
     if (os === 'windows') {
-      return `& ([scriptblock]::Create((irm ${ps(base + '/install.ps1')}))) -Hub ${ps(base)} -Key ${ps(key)} -Token ${ps(token)}`
+      const flag = allowShell ? ' -AllowShell' : ''
+      return `& ([scriptblock]::Create((irm ${ps(base + '/install.ps1')}))) -Hub ${ps(base)} -Key ${ps(key)} -Token ${ps(token)}${flag}`
     }
-    return `curl -fsSL ${sh(base + '/install.sh')} | sudo sh -s -- --hub ${sh(base)} --key ${sh(key)} --token ${sh(token)}`
+    const flag = allowShell ? ' --allow-shell' : ''
+    return `curl -fsSL ${sh(base + '/install.sh')} | sudo sh -s -- --hub ${sh(base)} --key ${sh(key)} --token ${sh(token)}${flag}`
   })
   const isLocalhost = $derived(/^https?:\/\/(localhost|127\.|\[::1\])/i.test(base))
   const expires = $derived(
@@ -119,6 +122,17 @@
           address or hostname, or set <code class="font-mono">HUB_URL</code> on the hub.
         </p>
       {/if}
+
+      <label class="mt-4 flex items-start gap-2.5 text-sm">
+        <input type="checkbox" class="mt-0.5 size-4 accent-[var(--accent)]" bind:checked={allowShell} />
+        <span>
+          <span class="font-medium">Allow remote shell</span>
+          <span class="block text-xs text-ink-2">
+            Lets hub users open a root (Windows: SYSTEM) terminal on this machine after confirming their password. The
+            setting lives on the machine; the hub cannot turn it on later.
+          </span>
+        </span>
+      </label>
 
       <div role="tablist" aria-label="Operating system" class="mt-5 flex gap-1 border-b border-line">
         {#each tabs as t (t.os)}

@@ -78,12 +78,16 @@ func (h *Hub) getAgentBinary(w http.ResponseWriter, r *http.Request) {
 
 // InstallCommands returns ready-to-paste install commands per OS. The web UI builds
 // the same commands itself (so the hub URL stays editable); this copy serves the CLI.
-func InstallCommands(hubURL, hubKey, token string) map[string]string {
+func InstallCommands(hubURL, hubKey, token string, allowShell bool) map[string]string {
 	sh := func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 	ps := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
 	unix := fmt.Sprintf("curl -fsSL %s | sudo sh -s -- --hub %s --key %s --token %s",
 		sh(hubURL+"/install.sh"), sh(hubURL), sh(hubKey), sh(token))
 	win := fmt.Sprintf("& ([scriptblock]::Create((irm %s))) -Hub %s -Key %s -Token %s",
 		ps(hubURL+"/install.ps1"), ps(hubURL), ps(hubKey), ps(token))
+	if allowShell {
+		unix += " --allow-shell"
+		win += " -AllowShell"
+	}
 	return map[string]string{"linux": unix, "darwin": unix, "windows": win}
 }

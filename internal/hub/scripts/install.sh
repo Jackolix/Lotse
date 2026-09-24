@@ -1,18 +1,20 @@
 #!/bin/sh
 # Installs the Lotse agent as a system service on Linux (systemd) or macOS (launchd).
-# Usage: curl -fsSL HUB/install.sh | sudo sh -s -- --hub HUB --key 'ssh-ed25519 ...' --token TOKEN
+# Usage: curl -fsSL HUB/install.sh | sudo sh -s -- --hub HUB --key 'ssh-ed25519 ...' --token TOKEN [--allow-shell]
 set -eu
 
 NAME=lotse-agent
 HUB=""
 KEY=""
 TOKEN=""
+ALLOW_SHELL=false
 
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--hub) HUB="$2"; shift 2 ;;
 	--key) KEY="$2"; shift 2 ;;
 	--token) TOKEN="$2"; shift 2 ;;
+	--allow-shell) ALLOW_SHELL=true; shift ;;
 	*) echo "unknown option: $1" >&2; exit 1 ;;
 	esac
 done
@@ -57,4 +59,4 @@ chmod 755 "$TMP"
 mv -f "$TMP" "$BIN"
 trap - EXIT
 
-"$BIN" install --hub="$HUB" --key="$KEY" --token="$TOKEN"
+"$BIN" install --hub="$HUB" --key="$KEY" --token="$TOKEN" --allow-shell="$ALLOW_SHELL"

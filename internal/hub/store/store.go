@@ -81,6 +81,20 @@ CREATE TABLE metrics (
 	load15     REAL NOT NULL DEFAULT 0,
 	PRIMARY KEY (system_id, res, ts)
 ) WITHOUT ROWID;
+`, `
+ALTER TABLE users ADD COLUMN totp_secret TEXT NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN elevated_until INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE audit_log (
+	id          INTEGER PRIMARY KEY,
+	ts          INTEGER NOT NULL,
+	username    TEXT NOT NULL DEFAULT '',
+	action      TEXT NOT NULL,
+	system_id   INTEGER, -- no foreign key: entries outlive deleted systems
+	system_name TEXT NOT NULL DEFAULT '',
+	remote      TEXT NOT NULL DEFAULT '',
+	detail      TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX audit_log_ts ON audit_log (ts);
 `}
 
 func (s *Store) migrate() error {
@@ -114,7 +128,18 @@ type User struct {
 	ID           int64
 	Username     string
 	PasswordHash string
+	TOTPSecret   string // base32; empty when two-factor login is off
 }
+
+// Session is a logged-in browser. ElevatedUntil marks a recent re-authentication,
+// which sensitive actions such as opening a shell require.
+type Session struct {
+	User
+	TokenHash     []byte
+	ElevatedUntil int64
+}
+
+const userCols = "id, username, password_hash, totp_secret"
 
 func (s *Store) CountUsers() (int, error) {
 	var n int
@@ -134,9 +159,19 @@ func (s *Store) CreateUser(username, passwordHash string) (*User, error) {
 
 func (s *Store) UserByName(username string) (*User, error) {
 	u := &User{}
-	err := s.db.QueryRow("SELECT id, username, password_hash FROM users WHERE username = ?", username).
-		Scan(&u.ID, &u.Username, &u.PasswordHash)
+	err := s.db.QueryRow("SELECT "+userCols+" FROM users WHERE username = ?", username).
+		Scan(&u.ID, &u.Username, &u.PasswordHash, &u.TOTPSecret)
 	return u, notFound(err)
+}
+
+func (s *Store) SetPassword(userID int64, passwordHash string) error {
+	_, err := s.db.Exec("UPDATE users SET password_hash = ? WHERE id = ?", passwordHash, userID)
+	return err
+}
+
+func (s *Store) SetTOTPSecret(userID int64, secret string) error {
+	_, err := s.db.Exec("UPDATE users SET totp_secret = ? WHERE id = ?", secret, userID)
+	return err
 }
 
 func (s *Store) CreateSession(tokenHash []byte, userID int64, expires time.Time) error {
@@ -145,13 +180,24 @@ func (s *Store) CreateSession(tokenHash []byte, userID int64, expires time.Time)
 	return err
 }
 
-// SessionUser returns the user of a valid, unexpired session.
-func (s *Store) SessionUser(tokenHash []byte) (*User, error) {
-	u := &User{}
-	err := s.db.QueryRow(`SELECT u.id, u.username, u.password_hash FROM sessions s
-		JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?`,
-		tokenHash, time.Now().Unix()).Scan(&u.ID, &u.Username, &u.PasswordHash)
-	return u, notFound(err)
+// Session returns a valid, unexpired session with its user.
+func (s *Store) Session(tokenHash []byte) (*Session, error) {
+	sess := &Session{TokenHash: tokenHash}
+	err := s.db.QueryRow(`SELECT u.id, u.username, u.password_hash, u.totp_secret, s.elevated_until
+		FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?`,
+		tokenHash, time.Now().Unix()).Scan(&sess.ID, &sess.Username, &sess.PasswordHash, &sess.TOTPSecret, &sess.ElevatedUntil)
+	return sess, notFound(err)
+}
+
+func (s *Store) ElevateSession(tokenHash []byte, until time.Time) error {
+	_, err := s.db.Exec("UPDATE sessions SET elevated_until = ? WHERE token_hash = ?", until.Unix(), tokenHash)
+	return err
+}
+
+// DeleteOtherSessions logs a user out everywhere except the given session.
+func (s *Store) DeleteOtherSessions(userID int64, keep []byte) error {
+	_, err := s.db.Exec("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?", userID, keep)
+	return err
 }
 
 func (s *Store) DeleteSession(tokenHash []byte) error {
