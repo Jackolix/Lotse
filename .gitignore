@@ -1,0 +1,10 @@
+# local hub data (database, hub key)
+/data/
+# build output
+/dist/
+/web/node_modules/
+/web/dist/*
+!/web/dist/.gitkeep
+# local agent config used for development
+/dev/
+.DS_Store

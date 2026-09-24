@@ -1,0 +1,160 @@
+@import "tailwindcss";
+
+/* Every color is a role token; light and dark values are defined once below. */
+@theme inline {
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-sunken: var(--sunken);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-good: var(--good);
+  --color-good-ink: var(--good-ink);
+  --color-warning: var(--warning);
+  --color-critical: var(--critical);
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --sunken: #f0efec;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --line: rgba(11, 11, 11, 0.1);
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --accent: #2a78d6;
+  --accent-hover: #256abf;
+  --good: #0ca30c;
+  --good-ink: #006300;
+  --warning: #fab219;
+  --critical: #d03b3b;
+  /* chart series, validated as a set (CVD-safe adjacent pairs) */
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --s3: #1baf7a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --sunken: #242423;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --line: rgba(255, 255, 255, 0.1);
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --accent: #3987e5;
+    --accent-hover: #5598e7;
+    --good-ink: #0ca30c;
+    --s1: #3987e5;
+    --s2: #d95926;
+    --s3: #199e70;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --sunken: #242423;
+  --ink: #ffffff;
+  --ink-2: #c3c2b7;
+  --muted: #898781;
+  --line: rgba(255, 255, 255, 0.1);
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --accent: #3987e5;
+  --accent-hover: #5598e7;
+  --good-ink: #0ca30c;
+  --s1: #3987e5;
+  --s2: #d95926;
+  --s3: #199e70;
+}
+
+html,
+body {
+  background: var(--page);
+  color: var(--ink);
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Shared building blocks */
+@layer components {
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 0.75rem;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    height: 2.25rem;
+    padding: 0 0.85rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--ink);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn:hover {
+    background: var(--sunken);
+  }
+  .btn:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+  .btn-primary {
+    background: var(--accent);
+    border-color: transparent;
+    color: #fff;
+  }
+  .btn-primary:hover {
+    background: var(--accent-hover);
+  }
+  .btn-danger {
+    color: var(--critical);
+  }
+  .input {
+    height: 2.25rem;
+    width: 100%;
+    padding: 0 0.75rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--line);
+    background: var(--page);
+    color: var(--ink);
+    font-size: 0.875rem;
+  }
+  .input:focus,
+  .btn:focus-visible,
+  a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+}
+
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}

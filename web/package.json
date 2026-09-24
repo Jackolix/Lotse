@@ -1,0 +1,23 @@
+{
+  "name": "lotse-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node -e \"import('node:fs').then(fs => fs.writeFileSync('dist/.gitkeep', ''))\"",
+    "check": "svelte-check --tsconfig ./tsconfig.json"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@tailwindcss/vite": "^4.3.3",
+    "@tsconfig/svelte": "^5.0.8",
+    "svelte": "^5.57.1",
+    "svelte-check": "^4.7.6",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.1"
+  },
+  "dependencies": {
+    "uplot": "^1.6.32"
+  }
+}

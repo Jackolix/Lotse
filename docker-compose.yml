@@ -1,0 +1,20 @@
+services:
+  hub:
+    build: .
+    image: lotse-hub:latest
+    container_name: lotse-hub
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    volumes:
+      - hub-data:/data
+    environment:
+      # Address agents use to reach the hub, pre-filled in the "Add system" dialog.
+      # Leave empty to use whatever address the browser used to open the UI.
+      HUB_URL: ""
+    # Limits: the hub idles at ~20-30 MB; this leaves room for spikes.
+    mem_limit: 256m
+    cpus: 1.0
+
+volumes:
+  hub-data:
