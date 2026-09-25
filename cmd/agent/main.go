@@ -175,9 +175,11 @@ func cmdInstall(args []string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := s.Status(); !errors.Is(err, service.ErrNotInstalled) {
+	// Replace an existing service. Only fail on removal if we know one is installed;
+	// some service managers report other errors for "not there".
+	if _, statusErr := s.Status(); !errors.Is(statusErr, service.ErrNotInstalled) {
 		_ = s.Stop()
-		if err := s.Uninstall(); err != nil {
+		if err := s.Uninstall(); err != nil && statusErr == nil {
 			return fmt.Errorf("remove previous service: %w", err)
 		}
 	}

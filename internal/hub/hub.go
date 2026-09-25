@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -103,17 +104,28 @@ func New(cfg Config, log *slog.Logger) (*Hub, error) {
 
 func openData(cfg Config) (*store.Store, ssh.Signer, error) {
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
-		return nil, nil, err
+		return nil, nil, permissionHint(cfg.DataDir, err)
 	}
 	signer, err := sshkey.LoadOrCreate(filepath.Join(cfg.DataDir, "hub_ed25519"))
 	if err != nil {
-		return nil, nil, fmt.Errorf("hub key: %w", err)
+		return nil, nil, permissionHint(cfg.DataDir, fmt.Errorf("hub key: %w", err))
 	}
 	st, err := store.Open(filepath.Join(cfg.DataDir, "hub.db"))
 	if err != nil {
 		return nil, nil, fmt.Errorf("database: %w", err)
 	}
 	return st, signer, nil
+}
+
+// permissionHint explains the usual cause of an unwritable data directory: a bind
+// mount owned by another user while the container runs as a fixed non-root user.
+func permissionHint(dir string, err error) error {
+	if !errors.Is(err, fs.ErrPermission) {
+		return err
+	}
+	return fmt.Errorf("%w\n\nThe hub runs as user %d and cannot write to %s. Either start the container as root "+
+		"(the image default), so it can take over the folder itself, or run on the host:\n  chown -R %d:%d <the folder mounted at %s>",
+		err, os.Getuid(), dir, os.Getuid(), os.Getgid(), dir)
 }
 
 // PublicKey is the hub identity that agents pin, in authorized_keys format.

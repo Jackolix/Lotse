@@ -56,8 +56,9 @@ dev-hub:
 dev-web:
 	cd web && npm run dev
 
+# Builds the image under the name docker-compose.yml uses.
 docker:
-	docker compose build --build-arg VERSION=$(VERSION)
+	docker build --build-arg VERSION=$(VERSION) -t ghcr.io/jackolix/lotse:latest .
 
 clean:
 	rm -rf dist web/dist/assets web/dist/index.html web/dist/favicon.svg

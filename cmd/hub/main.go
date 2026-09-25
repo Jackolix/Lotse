@@ -48,6 +48,9 @@ func main() {
 }
 
 func serve(cfg hub.Config) error {
+	if err := dropPrivileges(cfg.DataDir); err != nil {
+		return err
+	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	h, err := hub.New(cfg, log)
 	if err != nil {
@@ -65,6 +68,10 @@ func token(cfg hub.Config, args []string) error {
 	ttl := fs.Duration("ttl", time.Hour, "how long the token can enroll new agents")
 	allowShell := fs.Bool("allow-shell", false, "include --allow-shell in the printed install commands")
 	fs.Parse(args)
+	// `docker exec` runs as root; don't leave root-owned files in the data directory.
+	if err := dropPrivileges(cfg.DataDir); err != nil {
+		return err
+	}
 
 	tok, expires, key, err := hub.CreateEnrollToken(cfg, *ttl)
 	if err != nil {

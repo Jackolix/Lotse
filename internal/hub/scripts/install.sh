@@ -39,24 +39,43 @@ aarch64 | arm64) ARCH=arm64 ;;
 *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 
-BIN=/usr/local/bin/$NAME
 URL="$HUB/download/$NAME-$OS-$ARCH"
-mkdir -p "$(dirname "$BIN")"
-# Download next to the target and rename, so a running binary is replaced atomically.
-TMP="$(mktemp "$BIN.XXXXXX")"
-trap 'rm -f "$TMP"' EXIT
 
+download() {
+	if command -v curl >/dev/null 2>&1; then
+		curl -fsSL --compressed -o "$1" "$URL"
+	elif command -v wget >/dev/null 2>&1; then
+		wget -qO "$1" "$URL"
+	else
+		echo "curl or wget is required" >&2
+		return 1
+	fi
+}
+
+# Systems with a read-only /usr (ZimaOS, Fedora CoreOS, ...) get the agent in /opt or
+# /var/lib instead. A location must be writable and allow running programs (not noexec).
 echo "Downloading $NAME for $OS/$ARCH from $HUB ..."
-if command -v curl >/dev/null 2>&1; then
-	curl -fsSL --compressed -o "$TMP" "$URL"
-elif command -v wget >/dev/null 2>&1; then
-	wget -qO "$TMP" "$URL"
-else
-	echo "curl or wget is required" >&2
+BIN=""
+for dir in /usr/local/bin "/opt/$NAME" "/var/lib/$NAME"; do
+	{ mkdir -p "$dir" && [ -w "$dir" ]; } 2>/dev/null || continue
+	# Download next to the target and rename, so a running binary is replaced atomically.
+	TMP="$(mktemp "$dir/.$NAME.XXXXXX" 2>/dev/null)" || continue
+	trap 'rm -f "$TMP"' EXIT
+	download "$TMP"
+	chmod 755 "$TMP"
+	if "$TMP" version >/dev/null 2>&1; then
+		mv -f "$TMP" "$dir/$NAME"
+		trap - EXIT
+		BIN="$dir/$NAME"
+		break
+	fi
+	rm -f "$TMP"
+	trap - EXIT
+done
+if [ -z "$BIN" ]; then
+	echo "found no writable location that allows running programs (tried /usr/local/bin, /opt/$NAME, /var/lib/$NAME)" >&2
 	exit 1
 fi
-chmod 755 "$TMP"
-mv -f "$TMP" "$BIN"
-trap - EXIT
+echo "Installed $BIN"
 
 "$BIN" install --hub="$HUB" --key="$KEY" --token="$TOKEN" --allow-shell="$ALLOW_SHELL"

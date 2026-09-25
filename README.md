@@ -43,8 +43,11 @@ web/                        Svelte 5 + Vite + Tailwind + uPlot, embedded into th
 
 ```sh
 docker compose pull && docker compose up -d      # release image from ghcr.io/jackolix/lotse
-docker compose up -d --build                     # or build from source
+make docker && docker compose up -d              # or build the image from source first
 ```
+
+The compose file works as is in app managers like CasaOS, ZimaOS or Portainer. `/data` can be a named volume or a
+bind-mounted folder.
 
 Open `http://<docker-host>:8090`. On first visit you create the admin account.
 
@@ -54,6 +57,7 @@ Open `http://<docker-host>:8090`. On first visit you create the admin account.
 | `HUB_ADDR`      | `:8090`        | Listen address                                                            |
 | `HUB_DATA_DIR`  | `/data`        | Database and hub key (`hub_ed25519`); **back this up**                    |
 | `HUB_AGENT_DIR` | `/app/agents`  | Agent binaries served for installation                                    |
+| `PUID`, `PGID`  | `65532`        | User the hub switches to after taking ownership of `/data`               |
 
 The hub key in `/data/hub_ed25519` is the identity every agent pins. If you lose it, all agents must be
 reinstalled.
@@ -92,6 +96,9 @@ sudo lotse-agent install --hub http://hub.lan:8090 --key 'ssh-ed25519 …' --tok
 
 A hub serves the agents built into its image. If it doesn't carry one, it redirects the download to
 its own version on GitHub.
+
+On systems with a read-only `/usr` (ZimaOS, Fedora CoreOS, …) the installer puts the agent in `/opt/lotse-agent` or
+`/var/lib/lotse-agent`.
 
 To remove an agent, run `sudo lotse-agent uninstall --purge` (or the same command in an elevated
 PowerShell), then delete the binary.

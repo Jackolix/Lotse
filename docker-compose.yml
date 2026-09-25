@@ -1,9 +1,8 @@
 services:
   hub:
     # Published by GitHub Actions: "latest" is the newest release, "main" follows the
-    # main branch. `docker compose up -d --build` builds from source instead.
+    # main branch. To build from source instead: make docker
     image: ghcr.io/jackolix/lotse:latest
-    build: .
     container_name: lotse-hub
     restart: unless-stopped
     ports:
@@ -14,6 +13,10 @@ services:
       # Address agents use to reach the hub, pre-filled in the "Add system" dialog.
       # Leave empty to use whatever address the browser used to open the UI.
       HUB_URL: ""
+      # Owner of the files in /data (default 65532). Set to your user's IDs if you
+      # want to manage a bind-mounted folder, e.g. 1000.
+      # PUID: "1000"
+      # PGID: "1000"
     # Wake-on-LAN normally goes through an agent on the target's subnet. Only if no
     # such agent exists does the hub broadcast itself, which needs host networking
     # (Linux only): uncomment the next line and remove "ports".

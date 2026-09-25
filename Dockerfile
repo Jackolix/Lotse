@@ -42,17 +42,19 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
     GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "$LDFLAGS" -o /out/hub ./cmd/hub && \
     mkdir -p /out/data
 
-# ---- runtime: static binary on distroless, no shell, non-root ----
-FROM gcr.io/distroless/static-debian13:nonroot
+# ---- runtime: static binary on distroless, no shell ----
+# Root variant: the hub starts as root and drops privileges itself (see below).
+FROM gcr.io/distroless/static-debian13
 LABEL org.opencontainers.image.title="Lotse" \
       org.opencontainers.image.description="Self-hosted monitoring hub with remote shell and Wake-on-LAN" \
       org.opencontainers.image.source="https://github.com/Jackolix/Lotse"
 COPY --from=hub /out/hub /app/hub
 COPY --from=agents /out/agents /app/agents
-COPY --from=hub --chown=nonroot:nonroot /out/data /data
+COPY --from=hub --chown=65532:65532 /out/data /data
 ENV HUB_ADDR=:8090 HUB_DATA_DIR=/data HUB_AGENT_DIR=/app/agents
 EXPOSE 8090
 VOLUME /data
-USER nonroot
+# The hub starts as root only to take ownership of /data (bind mounts are often
+# root-owned), then switches to PUID:PGID, by default 65532 ("nonroot").
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD ["/app/hub", "healthcheck"]
 ENTRYPOINT ["/app/hub"]
