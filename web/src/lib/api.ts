@@ -44,9 +44,33 @@ export interface Metrics {
   load15: number
   uptime: number
   fs?: Filesystem[]
+  containers?: Container[]
 }
 
-export type MetricKey = Exclude<keyof Metrics, 'uptime' | 'fs'>
+export interface Container {
+  id: string
+  name: string
+  image: string
+  state: string
+  status: string
+  cpu: number
+  mem: number
+  mem_limit: number
+  net_rx: number
+  net_tx: number
+}
+
+export interface Process {
+  pid: number
+  name: string
+  user?: string
+  cpu: number
+  mem: number
+  started?: number
+  cmd?: string
+}
+
+export type MetricKey = Exclude<keyof Metrics, 'uptime' | 'fs' | 'containers'>
 
 export interface System {
   id: number
@@ -108,6 +132,61 @@ export interface WakeResult {
   macs: string[]
 }
 
+export type AlertMetric = 'offline' | 'cpu' | 'memory' | 'disk' | 'load'
+
+export interface AlertRule {
+  id: number
+  name: string
+  system_id: number | null
+  metric: AlertMetric
+  threshold: number
+  duration: number
+  notifiers: number[]
+  enabled: boolean
+}
+
+export interface Alert {
+  id: number
+  rule_id: number
+  rule_name: string
+  system_id: number
+  system_name: string
+  metric: AlertMetric
+  threshold: number
+  value: number
+  started_at: number
+  resolved_at: number | null
+}
+
+export type NotifierType = 'ntfy' | 'discord' | 'slack' | 'telegram' | 'webhook' | 'email'
+
+export interface NotifierConfig {
+  url?: string
+  token?: string
+  token_set?: boolean
+  chat_id?: string
+  host?: string
+  port?: number
+  username?: string
+  password?: string
+  password_set?: boolean
+  from?: string
+  to?: string
+  tls?: 'starttls' | 'tls' | 'none'
+}
+
+export interface Notifier {
+  id: number
+  name: string
+  type: NotifierType
+  enabled: boolean
+  last_sent: number
+  last_error: string
+  config: NotifierConfig
+}
+
+export type NotifierInput = Pick<Notifier, 'name' | 'type' | 'enabled' | 'config'> & { id?: number }
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -160,6 +239,10 @@ export const api = {
   metrics: (id: number, range: RangeKey) => request<Series>('GET', `/api/systems/${id}/metrics?range=${range}`),
   enroll: () => request<Enrollment>('POST', '/api/enroll'),
   wake: (id: number) => request<WakeResult>('POST', `/api/systems/${id}/wake`),
+  processes: (id: number, limit = 50) =>
+    request<{ processes: Process[]; total: number }>('GET', `/api/systems/${id}/processes?limit=${limit}`),
+  signal: (id: number, pid: number, signal: 'terminate' | 'kill', name: string) =>
+    request<void>('POST', `/api/systems/${id}/processes/${pid}/signal`, { signal, name }),
   elevate: (password: string, code = '') =>
     request<{ elevated_until: number }>('POST', '/api/elevate', { password, code }),
   changePassword: (current: string, next: string) => request<void>('POST', '/api/me/password', { current, new: next }),
@@ -168,4 +251,14 @@ export const api = {
     request<void>('POST', '/api/me/totp/enable', { secret, code, password }),
   totpDisable: (password: string, code: string) => request<void>('POST', '/api/me/totp/disable', { password, code }),
   audit: (before = 0) => request<{ entries: AuditEntry[]; more: boolean }>('GET', `/api/audit?before=${before}&limit=50`),
+  alerts: () => request<{ active: Alert[]; history: Alert[] }>('GET', '/api/alerts'),
+  alertRules: () => request<AlertRule[]>('GET', '/api/alert-rules'),
+  saveAlertRule: (r: Omit<AlertRule, 'id'> & { id?: number }) =>
+    r.id ? request<AlertRule>('PUT', `/api/alert-rules/${r.id}`, r) : request<AlertRule>('POST', '/api/alert-rules', r),
+  deleteAlertRule: (id: number) => request<void>('DELETE', `/api/alert-rules/${id}`),
+  notifiers: () => request<Notifier[]>('GET', '/api/notifiers'),
+  saveNotifier: (n: NotifierInput) =>
+    n.id ? request<{ id: number }>('PUT', `/api/notifiers/${n.id}`, n) : request<{ id: number }>('POST', '/api/notifiers', n),
+  deleteNotifier: (id: number) => request<void>('DELETE', `/api/notifiers/${id}`),
+  testNotifier: (n: NotifierInput) => request<void>('POST', '/api/notifiers/test', n),
 }

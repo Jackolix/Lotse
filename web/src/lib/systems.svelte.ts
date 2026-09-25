@@ -1,4 +1,4 @@
-import { api, type Metrics, type System } from './api'
+import { api, type Alert, type Metrics, type System } from './api'
 
 type Listener = (t: number, m: Metrics) => void
 
@@ -13,6 +13,10 @@ class SystemsStore {
   list = $state<System[]>([])
   loaded = $state(false)
   connected = $state(false)
+  /** Firing alerts, kept current through "alerts" events. */
+  alerts = $state<Alert[]>([])
+  /** Bumped on every "alerts" event, for pages showing rules or channels. */
+  alertsVersion = $state(0)
 
   #es: EventSource | null = null
   #listeners = new Map<number, Set<Listener>>()
@@ -34,16 +38,32 @@ class SystemsStore {
     clearTimeout(this.#retryTimer)
     this.#close()
     this.list = []
+    this.alerts = []
     this.loaded = false
   }
 
   async refresh() {
     try {
-      this.list = await api.systems()
+      const [list, alerts] = await Promise.all([api.systems(), api.alerts()])
+      this.list = list
+      this.alerts = alerts.active
       this.loaded = true
     } catch {
       // 401 is handled globally; other errors keep the last known list
     }
+  }
+
+  async refreshAlerts() {
+    try {
+      this.alerts = (await api.alerts()).active
+      this.alertsVersion++
+    } catch {
+      // keep the last known state
+    }
+  }
+
+  alertsFor(id: number): Alert[] {
+    return this.alerts.filter((a) => a.system_id === id)
   }
 
   get(id: number): System | undefined {
@@ -98,6 +118,7 @@ class SystemsStore {
       if (sys) sys.online = ev.online
     })
     es.addEventListener('systems', () => this.refresh())
+    es.addEventListener('alerts', () => this.refreshAlerts())
   }
 
   #close() {

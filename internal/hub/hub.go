@@ -64,6 +64,7 @@ type Hub struct {
 	setupMu sync.Mutex
 	agentWG sync.WaitGroup
 
+	alerts   *alertEngine
 	totpMu   sync.Mutex
 	totpUsed map[int64]int64 // last accepted TOTP time step per user, against replays
 
@@ -90,8 +91,13 @@ func New(cfg Config, log *slog.Logger) (*Hub, error) {
 		agents:   map[int64]*agentConn{},
 		states:   map[int64]*sysState{},
 		shells:   map[*shellSession]struct{}{},
+		alerts:   &alertEngine{states: map[alertKey]*alertState{}, offline: map[int64]time.Time{}, started: time.Now()},
 	}
 	h.broker = newBroker(h.viewersChanged)
+	if err := h.loadAlerts(); err != nil {
+		st.Close()
+		return nil, fmt.Errorf("loading alerts: %w", err)
+	}
 	return h, nil
 }
 
@@ -163,9 +169,11 @@ func (h *Hub) maintenance(ctx context.Context) {
 	h.rollup(store.Retention[store.Res1]) // catch up after downtime
 	h.prune()
 	flush := time.NewTicker(10 * time.Second)
+	offline := time.NewTicker(15 * time.Second)
 	rollup := time.NewTicker(5 * time.Minute)
 	prune := time.NewTicker(time.Hour)
 	defer flush.Stop()
+	defer offline.Stop()
 	defer rollup.Stop()
 	defer prune.Stop()
 	for {
@@ -174,6 +182,8 @@ func (h *Hub) maintenance(ctx context.Context) {
 			return
 		case <-flush.C:
 			h.flush(false)
+		case now := <-offline.C:
+			h.evaluateOffline(now)
 		case <-rollup.C:
 			h.rollup(2 * time.Hour)
 		case <-prune.C:
@@ -200,6 +210,9 @@ func (h *Hub) prune() {
 	}
 	if err := h.store.PruneAudit(time.Now()); err != nil {
 		h.log.Error("pruning audit log failed", "err", err)
+	}
+	if err := h.store.PruneAlerts(time.Now()); err != nil {
+		h.log.Error("pruning alert history failed", "err", err)
 	}
 }
 

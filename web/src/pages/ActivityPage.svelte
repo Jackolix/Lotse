@@ -33,6 +33,12 @@
     system_renamed: 'Renamed a system',
     system_deleted: 'Deleted a system',
     token_created: 'Created an enrollment token',
+    alert_rule_saved: 'Saved an alert rule',
+    alert_rule_deleted: 'Deleted an alert rule',
+    notifier_saved: 'Saved a notification channel',
+    notifier_deleted: 'Deleted a notification channel',
+    process_signaled: 'Stopped a process',
+    process_signal_failed: 'Stopping a process failed',
   }
   const failed = (action: string) => action.endsWith('_failed') || action === 'shell_denied'
 

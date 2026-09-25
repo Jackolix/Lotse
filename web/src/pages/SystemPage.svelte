@@ -3,10 +3,12 @@
   import { untrack } from 'svelte'
   import { api, ApiError, type MetricKey, type Metrics, type RangeKey, type Series } from '../lib/api'
   import ChartCard from '../lib/components/ChartCard.svelte'
+  import ContainerTable from '../lib/components/ContainerTable.svelte'
+  import ProcessTable from '../lib/components/ProcessTable.svelte'
   import Icon from '../lib/components/Icon.svelte'
   import Meter from '../lib/components/Meter.svelte'
   import StatusDot from '../lib/components/StatusDot.svelte'
-  import { ago, archLabel, bytes, duration, osLabel, pct, rate, ratio } from '../lib/format'
+  import { ago, archLabel, bytes, dateTime, duration, osLabel, pct, rate, ratio } from '../lib/format'
   import { link, navigate } from '../lib/router.svelte'
   import { canShell as shellAllowed, deleteSystem, ipv4Of, macsOf, wakeSystem } from '../lib/systemActions'
   import { systems } from '../lib/systems.svelte'
@@ -34,6 +36,7 @@
   let newName = $state('')
   let actionError = $state('')
   let waking = $state(false)
+  let showProcesses = $state(false)
 
   const sys = $derived(systems.get(id))
   const m = $derived(sys?.metrics ?? null)
@@ -194,6 +197,16 @@
       {/if}
     </div>
     {#if actionError}<p class="mt-3 text-sm text-critical" role="alert">{actionError}</p>{/if}
+    {#each systems.alertsFor(id) as a (a.id)}
+      <p
+        class="mt-3 flex items-center gap-2 rounded-lg px-3 py-2 text-sm"
+        style:background="color-mix(in oklab, var(--critical) 12%, var(--surface))"
+      >
+        <Icon name="bell" size={14} class="text-critical" />
+        <span><strong class="font-medium">{a.rule_name}</strong> firing since {dateTime(a.started_at)}</span>
+        <a class="ml-auto text-xs text-ink-2 hover:text-ink" href="/alerts" onclick={link}>Alerts</a>
+      </p>
+    {/each}
     {#if sys.online && !canShell}
       <p class="mt-3 text-xs text-muted">
         Remote shell is off for this machine. To allow it, re-run the install command with
@@ -323,6 +336,10 @@
     {/if}
   </div>
 
+  {#if m?.containers?.length}
+    <ContainerTable containers={m.containers} />
+  {/if}
+
   {#if m?.fs?.length}
     <section class="card mt-4 overflow-hidden">
       <h2 class="px-4 pt-4 text-sm font-medium">Filesystems</h2>
@@ -350,6 +367,20 @@
           </tbody>
         </table>
       </div>
+    </section>
+  {/if}
+
+  {#if sys.online}
+    <section class="card mt-4 overflow-hidden pb-2">
+      {#if showProcesses}
+        <ProcessTable systemId={id} canControl={canShell} />
+      {:else}
+        <div class="flex flex-wrap items-center gap-3 px-4 py-3">
+          <h2 class="text-sm font-medium">Processes</h2>
+          <span class="text-xs text-muted">Sampled on demand, refreshed every 5 seconds while shown.</span>
+          <button class="btn ml-auto h-8" onclick={() => (showProcesses = true)}><Icon name="list" size={14} /> Show processes</button>
+        </div>
+      {/if}
     </section>
   {/if}
 {/if}

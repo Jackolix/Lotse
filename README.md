@@ -1,7 +1,8 @@
 # Lotse
 
 A lightweight, self-hosted monitoring hub for Linux, macOS and Windows machines, in the spirit of
-[Beszel](https://github.com/henrygd/beszel), that can also act on them: a browser terminal and Wake-on-LAN.
+[Beszel](https://github.com/henrygd/beszel), that can also act on them: alerts, a browser terminal, processes and
+Docker containers, and Wake-on-LAN.
 
 - **Hub**: one Go binary in a Docker container. It includes the web UI, stores data in SQLite, and serves
   the agent installers. Idles at under 10 MB RAM.
@@ -109,6 +110,27 @@ PowerShell on Windows 10 1809 or newer (via ConPTY). The shell runs as the agent
 - **Audit.** Every shell is logged under **Activity** with user, source IP, duration, bytes and exit status.
   Keystrokes and output are not recorded. Signing out closes your open shells.
 
+## Alerts
+
+The **Alerts** page has rules and notification channels. A rule fires when a system is offline, or when its CPU,
+memory, disk or load stays above a threshold for a set time. It can watch every system or just one. Four defaults
+come with a new hub: offline for 2 min, CPU or memory above 90 % for 5 min, and disk above 90 %.
+
+- **Channels:** ntfy, Discord, Slack, Telegram, email (SMTP) and a generic JSON webhook, each with a *Send test*
+  button. Secrets such as bot tokens and SMTP passwords are never sent back to the browser.
+- **Resolving:** an alert resolves after 60 s back to normal, so a value hovering at the threshold doesn't flood
+  you. Offline alerts resolve as soon as the agent reconnects. Both firing and resolving are notified.
+- **Restarts:** firing alerts survive a hub restart without being notified again. The history is kept for 90 days.
+- **Links:** set `HUB_URL` so notifications link to the affected system.
+
+## Processes and containers
+
+- **Processes:** the busiest processes are listed on demand, refreshed every 5 s while shown. Command lines can
+  contain secrets, so agents only include them when installed with `--allow-shell`. Terminating or killing a process
+  needs the same opt-in plus a password confirmation, and it is audited.
+- **Containers:** if Docker or Podman runs on the machine, each container shows its state, CPU, memory and network.
+  No setup is needed; the agent uses the local API socket. Windows' Docker Desktop pipe isn't supported yet.
+
 ## Wake-on-LAN
 
 Offline systems get a **Wake** button. Agents 0.2+ report their network interfaces (MAC address and subnet).
@@ -134,8 +156,8 @@ Ethernet.
   enrolled, or that present a valid, unexpired enrollment token.
 - Session and enrollment tokens are stored as SHA-256 hashes.
 - Deleting a system in the UI drops its connection. The agent cannot rejoin without a new token.
-- Agents refuse shells unless installed with `--allow-shell`. They send Wake-on-LAN packets only to the broadcast
-  addresses of their own networks.
+- Agents refuse shells and process signals unless installed with `--allow-shell`, and only then include command
+  lines in process lists. They send Wake-on-LAN packets only to the broadcast addresses of their own networks.
 - The install command fetches the installer over whatever scheme the hub URL uses. On an untrusted network,
   put the hub behind HTTPS (Caddy, Traefik) and set `HUB_URL=https://…`.
 
@@ -171,6 +193,6 @@ lotse-agent run --config ./dev/agent.json
 1. ~~MVP: hub, agents, enrollment, CPU/memory/disk/network/load, dashboard, Docker image~~
 2. ~~Remote shell (xterm.js ⇄ hub ⇄ SSH channel ⇄ PTY/ConPTY), agent-side opt-in, re-authentication, TOTP,
    audit log, Wake-on-LAN via relay agents~~
-3. Alerts (thresholds, offline) via ntfy, Telegram, Discord or e-mail; Docker container stats; processes
+3. ~~Alerts via ntfy, Discord, Slack, Telegram, email and webhooks; Docker/Podman containers; processes~~
 4. Saved scripts across hosts, file transfer (SFTP), signed agent self-update, reboot and service actions,
    passkeys, more users with roles

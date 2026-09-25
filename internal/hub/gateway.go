@@ -229,6 +229,7 @@ func (h *Hub) register(ac *agentConn) int {
 		old.conn.Close()
 	}
 	h.broker.publish("status", statusEvent{ID: ac.id, Online: true})
+	h.agentOnline(ac.id)
 	return interval
 }
 
@@ -246,6 +247,7 @@ func (h *Hub) unregister(ac *agentConn) {
 	if st != nil {
 		h.flushState(ac.id, st, true)
 	}
+	h.agentOffline(ac.id)
 	h.broker.publish("status", statusEvent{ID: ac.id, Online: false})
 }
 

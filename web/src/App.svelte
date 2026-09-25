@@ -9,6 +9,7 @@
   import { systems } from './lib/systems.svelte'
   import { setTheme, theme, type ThemeMode } from './lib/theme.svelte'
   import ActivityPage from './pages/ActivityPage.svelte'
+  import AlertsPage from './pages/AlertsPage.svelte'
   import AuthForm from './pages/AuthForm.svelte'
   import Overview from './pages/Overview.svelte'
   import SettingsPage from './pages/SettingsPage.svelte'
@@ -27,6 +28,7 @@
 
   const nav = [
     { href: '/', label: 'Systems', active: (p: string) => p === '/' || p.startsWith('/systems/') },
+    { href: '/alerts', label: 'Alerts', active: (p: string) => p === '/alerts' },
     { href: '/activity', label: 'Activity', active: (p: string) => p === '/activity' },
     { href: '/settings', label: 'Settings', active: (p: string) => p === '/settings' },
   ]
@@ -54,7 +56,11 @@
             class="rounded-md px-2.5 py-1.5 {item.active(route.path)
               ? 'bg-sunken font-medium text-ink'
               : 'text-ink-2 hover:text-ink'}"
-            aria-current={item.active(route.path) ? 'page' : undefined}>{item.label}</a
+            aria-current={item.active(route.path) ? 'page' : undefined}
+            >{item.label}{#if item.href === '/alerts' && systems.alerts.length}<span
+                class="ml-1.5 inline-grid min-w-4.5 place-items-center rounded-full bg-critical px-1 text-[0.7rem] leading-4.5 font-semibold text-white"
+                aria-label="{systems.alerts.length} active">{systems.alerts.length}</span
+              >{/if}</a
           >
         {/each}
       </nav>
@@ -87,6 +93,8 @@
   <main class="mx-auto px-4 py-6 {terminal ? 'max-w-screen-2xl' : 'max-w-6xl'}">
     {#if route.path === '/'}
       <Overview />
+    {:else if route.path === '/alerts'}
+      <AlertsPage />
     {:else if route.path === '/activity'}
       <ActivityPage />
     {:else if route.path === '/settings'}

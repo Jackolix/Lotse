@@ -72,6 +72,14 @@
           <div class="flex items-center gap-2">
             <StatusDot online={s.online} label={false} />
             <span class="truncate font-medium">{s.name}</span>
+            {#if systems.alertsFor(s.id).length}
+              {@const n = systems.alertsFor(s.id).length}
+              <span
+                class="shrink-0 rounded-full px-1.5 text-[0.7rem] leading-4.5 font-medium text-critical"
+                style:background="color-mix(in oklab, var(--critical) 14%, var(--surface))"
+                title={systems.alertsFor(s.id).map((a) => a.rule_name).join(', ')}>{n} alert{n > 1 ? 's' : ''}</span
+              >
+            {/if}
           </div>
           <div class="truncate pl-4 text-xs text-muted">{osLabel(s.info)} · {archLabel(s.info.arch)}</div>
         </div>

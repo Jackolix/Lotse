@@ -222,6 +222,34 @@ func (a *Agent) features() []string {
 func (a *Agent) handleRequests(reqs <-chan *ssh.Request, intervals chan time.Duration) {
 	for req := range reqs {
 		switch req.Type {
+		case protocol.ReqProcesses:
+			var q protocol.ProcessQuery
+			_ = json.Unmarshal(req.Payload, &q)
+			// Sampling takes half a second; don't hold up other requests meanwhile.
+			go func() {
+				list, err := collect.Processes(min(max(q.Limit, 1), 100), a.cfg.AllowShell)
+				if err != nil {
+					a.log.Warn("listing processes failed", "err", err)
+					req.Reply(false, nil)
+					return
+				}
+				protocol.Reply(req, true, list)
+			}()
+		case protocol.ReqSignal:
+			var msg protocol.SignalMsg
+			if err := json.Unmarshal(req.Payload, &msg); err != nil {
+				req.Reply(false, nil)
+				continue
+			}
+			var reply protocol.SignalReply
+			if !a.cfg.AllowShell {
+				reply.Error = "stopping processes is disabled on this machine (install the agent with --allow-shell)"
+			} else if err := collect.Signal(msg.PID, msg.Signal); err != nil {
+				reply.Error = err.Error()
+			} else {
+				a.log.Info("process signaled by hub", "pid", msg.PID, "signal", msg.Signal)
+			}
+			protocol.Reply(req, reply.Error == "", reply)
 		case protocol.ReqWake:
 			var msg protocol.WakeMsg
 			if err := json.Unmarshal(req.Payload, &msg); err != nil || !wol.IsLocalBroadcast(msg.Broadcast) {

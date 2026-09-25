@@ -75,7 +75,10 @@ func (h *Hub) record(id int64, m *protocol.Metrics) {
 	}
 	st.n++
 	st.latest, st.latestAt = m, now
-	st.ring = append(st.ring, livePoint{now, m})
+	// The live chart only needs the numbers; drop lists to keep the ring small.
+	lite := *m
+	lite.Filesystems, lite.Containers = nil, nil
+	st.ring = append(st.ring, livePoint{now, &lite})
 	if len(st.ring) > liveRingSize {
 		st.ring = slices.Delete(st.ring, 0, len(st.ring)-liveRingSize)
 	}
@@ -85,6 +88,7 @@ func (h *Hub) record(id int64, m *protocol.Metrics) {
 		h.writeBucket(id, *done, prevLatest, prevAt)
 	}
 	h.broker.publish("metrics", metricsEvent{ID: id, T: now, M: m})
+	h.evaluateMetrics(id, m, time.Unix(now, 0))
 }
 
 func (st *sysState) takeBucket() store.MetricRow {

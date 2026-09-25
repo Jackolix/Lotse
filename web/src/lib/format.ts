@@ -62,6 +62,26 @@ export function archLabel(arch: string): string {
   return { amd64: 'x86-64', arm64: 'ARM64' }[arch] ?? arch
 }
 
+const METRIC_LABELS = { offline: 'Offline', cpu: 'CPU', memory: 'Memory', disk: 'Disk', load: 'Load' } as const
+export const metricLabel = (m: keyof typeof METRIC_LABELS) => METRIC_LABELS[m]
+export const isPercentMetric = (m: string) => m === 'cpu' || m === 'memory' || m === 'disk'
+
+/** "CPU above 90 % for 5 min" */
+export function ruleSummary(r: { metric: keyof typeof METRIC_LABELS; threshold: number; duration: number }): string {
+  const lasting = r.duration > 0 ? ` for ${durationLabel(r.duration)}` : ''
+  if (r.metric === 'offline') return `Offline${lasting || ''}`
+  const value = isPercentMetric(r.metric) ? `${r.threshold} %` : String(r.threshold)
+  return `${METRIC_LABELS[r.metric]} above ${value}${lasting}`
+}
+
+export function durationLabel(seconds: number): string {
+  if (seconds < 60) return `${seconds} s`
+  if (seconds < 3600) return `${Math.round(seconds / 60)} min`
+  const h = Math.floor(seconds / 3600)
+  const m = Math.round((seconds % 3600) / 60)
+  return m ? `${h} h ${m} min` : `${h} h`
+}
+
 /** Meter severity: accent below 70 %, warning below 90 %, critical above. */
 export function severity(percent: number): string {
   if (percent >= 90) return 'var(--critical)'

@@ -95,6 +95,47 @@ CREATE TABLE audit_log (
 	detail      TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX audit_log_ts ON audit_log (ts);
+`, `
+CREATE TABLE notifiers (
+	id         INTEGER PRIMARY KEY,
+	name       TEXT NOT NULL,
+	type       TEXT NOT NULL,
+	config     TEXT NOT NULL DEFAULT '{}',
+	enabled    INTEGER NOT NULL DEFAULT 1,
+	last_sent  INTEGER NOT NULL DEFAULT 0,
+	last_error TEXT NOT NULL DEFAULT '',
+	created_at INTEGER NOT NULL
+);
+CREATE TABLE alert_rules (
+	id         INTEGER PRIMARY KEY,
+	name       TEXT NOT NULL,
+	system_id  INTEGER REFERENCES systems(id) ON DELETE CASCADE, -- NULL: every system
+	metric     TEXT NOT NULL,                  -- offline, cpu, memory, disk, load
+	threshold  REAL NOT NULL DEFAULT 0,
+	duration   INTEGER NOT NULL DEFAULT 300,   -- seconds the condition must hold
+	notifiers  TEXT NOT NULL DEFAULT '[]',     -- JSON array of notifier IDs
+	enabled    INTEGER NOT NULL DEFAULT 1,
+	created_at INTEGER NOT NULL
+);
+CREATE TABLE alerts (
+	id          INTEGER PRIMARY KEY,
+	rule_id     INTEGER NOT NULL, -- no foreign keys: the history outlives rules and systems
+	rule_name   TEXT NOT NULL,
+	system_id   INTEGER NOT NULL,
+	system_name TEXT NOT NULL,
+	metric      TEXT NOT NULL,
+	threshold   REAL NOT NULL,
+	value       REAL NOT NULL,
+	started_at  INTEGER NOT NULL,
+	resolved_at INTEGER
+);
+CREATE INDEX alerts_resolved ON alerts (resolved_at);
+-- Sensible defaults; they show up in the UI and notify once a channel is attached.
+INSERT INTO alert_rules (name, metric, threshold, duration, created_at) VALUES
+	('System offline', 'offline', 0, 120, unixepoch()),
+	('High CPU', 'cpu', 90, 300, unixepoch()),
+	('High memory', 'memory', 90, 300, unixepoch()),
+	('Disk almost full', 'disk', 90, 60, unixepoch());
 `}
 
 func (s *Store) migrate() error {

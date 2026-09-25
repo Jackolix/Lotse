@@ -23,6 +23,12 @@ const (
 	ReqInterval = "interval"
 	// ReqWake asks the agent to broadcast Wake-on-LAN magic packets (hub to agent, want reply). Payload WakeMsg.
 	ReqWake = "wake"
+	// ReqProcesses asks for the busiest processes (hub to agent, want reply). Payload
+	// ProcessQuery, reply ProcessList.
+	ReqProcesses = "processes"
+	// ReqSignal stops a process (hub to agent, want reply). Payload SignalMsg, reply
+	// SignalReply. Agents only accept it with FeatureShell.
+	ReqSignal = "signal"
 )
 
 // Optional agent features, announced in Hello.Features.
@@ -92,6 +98,49 @@ type Metrics struct {
 	Uptime    uint64  `json:"uptime"` // seconds
 
 	Filesystems []Filesystem `json:"fs,omitempty"`
+	Containers  []Container  `json:"containers,omitempty"` // when Docker or Podman runs on the host
+}
+
+// Container is one Docker/Podman container. Stats are zero unless it is running.
+type Container struct {
+	ID       string  `json:"id"` // short form
+	Name     string  `json:"name"`
+	Image    string  `json:"image"`
+	State    string  `json:"state"`  // running, exited, paused, ...
+	Status   string  `json:"status"` // e.g. "Up 3 hours (healthy)"
+	CPU      float64 `json:"cpu"`    // percent of the whole machine
+	Mem      uint64  `json:"mem"`
+	MemLimit uint64  `json:"mem_limit"`
+	NetRx    float64 `json:"net_rx"` // bytes/s
+	NetTx    float64 `json:"net_tx"`
+}
+
+type ProcessQuery struct {
+	Limit int `json:"limit"`
+}
+
+type Process struct {
+	PID     int32   `json:"pid"`
+	Name    string  `json:"name"`
+	User    string  `json:"user,omitempty"`
+	CPU     float64 `json:"cpu"` // percent of the whole machine
+	Mem     uint64  `json:"mem"` // resident bytes
+	Started int64   `json:"started,omitempty"`
+	Command string  `json:"cmd,omitempty"` // only sent by agents that allow the shell
+}
+
+type ProcessList struct {
+	Processes []Process `json:"processes"`
+	Total     int       `json:"total"`
+}
+
+type SignalMsg struct {
+	PID    int32  `json:"pid"`
+	Signal string `json:"signal"` // "terminate" (SIGTERM; on Windows the same as kill) or "kill"
+}
+
+type SignalReply struct {
+	Error string `json:"error,omitempty"`
 }
 
 type Filesystem struct {

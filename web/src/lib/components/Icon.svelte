@@ -22,6 +22,8 @@
     list: 'M8 6h13|M8 12h13|M8 18h13|M3 6h.01|M3 12h.01|M3 18h.01',
     refresh: 'M21 12a9 9 0 1 1-3-6.7L21 8|M21 3v5h-5',
     clipboard: 'M9 3h6v4H9z|M9 5H6v16h12V5h-3',
+    bell: 'M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9|M10.3 21a1.9 1.9 0 0 0 3.4 0',
+    send: 'M22 2 11 13|M22 2l-7 20-4-9-9-4z',
   } as const
   export type IconName = keyof typeof paths
 </script>

@@ -41,7 +41,19 @@ func (h *Hub) Handler() http.Handler {
 	mux.HandleFunc("GET /api/systems/{id}/metrics", h.requireUser(h.getMetrics))
 	mux.HandleFunc("GET /api/systems/{id}/shell", h.requireUser(h.handleShell))
 	mux.HandleFunc("POST /api/systems/{id}/wake", h.requireUser(h.postWake))
+	mux.HandleFunc("GET /api/systems/{id}/processes", h.requireUser(h.getProcesses))
+	mux.HandleFunc("POST /api/systems/{id}/processes/{pid}/signal", h.requireUser(h.postSignal))
 	mux.HandleFunc("POST /api/enroll", h.requireUser(h.postEnroll))
+	mux.HandleFunc("GET /api/alerts", h.requireUser(h.getAlerts))
+	mux.HandleFunc("GET /api/alert-rules", h.requireUser(h.getAlertRules))
+	mux.HandleFunc("POST /api/alert-rules", h.requireUser(h.saveAlertRule))
+	mux.HandleFunc("PUT /api/alert-rules/{id}", h.requireUser(h.saveAlertRule))
+	mux.HandleFunc("DELETE /api/alert-rules/{id}", h.requireUser(h.deleteAlertRule))
+	mux.HandleFunc("GET /api/notifiers", h.requireUser(h.getNotifiers))
+	mux.HandleFunc("POST /api/notifiers", h.requireUser(h.saveNotifier))
+	mux.HandleFunc("POST /api/notifiers/test", h.requireUser(h.testNotifier))
+	mux.HandleFunc("PUT /api/notifiers/{id}", h.requireUser(h.saveNotifier))
+	mux.HandleFunc("DELETE /api/notifiers/{id}", h.requireUser(h.deleteNotifier))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 	})
@@ -200,6 +212,7 @@ func (h *Hub) deleteSystem(w http.ResponseWriter, r *http.Request, s *store.Sess
 		h.internalError(w, err)
 		return
 	}
+	h.resetAlerts(0, sys.ID)
 	h.log.Info("system deleted", "system", sys.Name, "id", sys.ID, "by", s.Username)
 	h.audit(r, s.Username, "system_deleted", sys, "")
 	h.broker.publish("systems", nil)

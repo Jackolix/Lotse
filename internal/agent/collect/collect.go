@@ -28,6 +28,7 @@ const maxFilesystems = 32
 // values, so it keeps the previous reading. It is not safe for concurrent use.
 type Collector struct {
 	primaryMount string
+	docker       docker
 
 	prevTime time.Time
 	prevCPU  *cpu.TimesStat
@@ -144,6 +145,7 @@ func (c *Collector) Sample() protocol.Metrics {
 		}
 	}
 	m.Uptime, _ = host.Uptime()
+	m.Containers = c.docker.containers()
 
 	c.prevTime = now
 	return m
