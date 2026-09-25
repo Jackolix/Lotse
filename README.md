@@ -1,49 +1,180 @@
-# Lotse
+<p align="center">
+  <img src="web/public/favicon.svg" width="72" height="72" alt="Lotse logo">
+</p>
 
-A lightweight, self-hosted monitoring hub for Linux, macOS and Windows machines, in the spirit of
-[Beszel](https://github.com/henrygd/beszel), that can also act on them: alerts, a browser terminal, file transfer,
-scripts across many machines, services, processes and Docker containers, reboots and Wake-on-LAN. Several users with
-roles, passkeys, and signed agent self-updates.
+<h1 align="center">Lotse</h1>
 
-- **Hub**: one Go binary in a Docker container. It includes the web UI, stores data in SQLite, and serves
-  the agent installers. Idles at under 10 MB RAM.
-- **Agent**: one static Go binary per OS/arch (~8 MB). Runs as a systemd, launchd or Windows service. Idles at
-  ~15 MB RAM and ~0 % CPU.
+<p align="center">
+  <strong>Self-hosted monitoring and remote control for Linux, macOS and Windows machines.</strong><br>
+  A tiny hub in Docker and a small agent on each machine. Watch them, get alerted, and fix things from your browser.
+</p>
 
-## Architecture
+<p align="center">
+  <a href="https://github.com/Jackolix/Lotse/actions/workflows/build.yml"><img src="https://github.com/Jackolix/Lotse/actions/workflows/build.yml/badge.svg" alt="Build status"></a>
+  <a href="https://github.com/Jackolix/Lotse/releases/latest"><img src="https://img.shields.io/github/v/release/Jackolix/Lotse?sort=semver&color=2a78d6" alt="Latest release"></a>
+  <a href="https://github.com/Jackolix/Lotse/pkgs/container/lotse"><img src="https://img.shields.io/badge/docker-ghcr.io%2Fjackolix%2Flotse-2a78d6?logo=docker&logoColor=white" alt="Docker image"></a>
+  <img src="https://img.shields.io/badge/agents-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-555" alt="Agents for Linux, macOS and Windows">
+  <a href="go.mod"><img src="https://img.shields.io/github/go-mod/go-version/Jackolix/Lotse?color=00add8" alt="Go version"></a>
+</p>
 
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#a-quick-tour">Tour</a> ·
+  <a href="#adding-machines">Adding machines</a> ·
+  <a href="#security-model">Security</a> ·
+  <a href="https://github.com/Jackolix/Lotse/releases">Releases</a>
+</p>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/overview-dark.png">
+  <img alt="Lotse overview: nine Linux, macOS and Windows machines with CPU, memory, disk, network and uptime; two have an alert" src="docs/screenshots/overview-light.png">
+</picture>
+
+**Lotse** (German for a ship's pilot) is a lightweight monitoring hub in the spirit of
+[Beszel](https://github.com/henrygd/beszel) that can also act on your machines. Besides charts and alerts, it gives
+you a browser terminal, file transfer, scripts across many machines, service and process control, reboots and
+Wake-on-LAN, with several users, roles, passkeys, an audit log and signed agent self-updates.
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+**Watch**
+
+- CPU, memory, swap, disk, disk I/O, network and load, live and for up to a year
+- Docker and Podman containers, top processes, systemd, launchd and Windows services
+- Alerts to ntfy, Discord, Slack, Telegram, email or any webhook
+
+</td>
+<td width="50%" valign="top">
+
+**Act** (opt-in per machine)
+
+- A real terminal in the browser: bash or zsh, PowerShell on Windows
+- Browse, upload and download files over SFTP
+- Run saved scripts on many machines at once, with live output
+- Restart services, stop processes, reboot, shut down, Wake-on-LAN
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+**Stay in control**
+
+- Viewer, operator and administrator roles, two-factor login and passkeys
+- Sensitive actions ask for your password again and land in the activity log
+- Agents pin the hub's key and install only signed updates
+
+</td>
+<td width="50%" valign="top">
+
+**Stay small**
+
+- Hub: one Go binary with the web UI and SQLite built in, idles under 10 MB RAM
+- Agent: one static ~8 MB binary, idles at ~15 MB RAM and ~0 % CPU
+- Agents dial out, so machines need no open ports and can sit behind NAT
+
+</td>
+</tr>
+</table>
+
+## Quick start
+
+Start the hub on any machine with Docker:
+
+```sh
+docker run -d --name lotse-hub --restart unless-stopped \
+  -p 8090:8090 -v lotse-data:/data ghcr.io/jackolix/lotse:latest
 ```
-Browser ──HTTP, SSE, WebSocket──▶ Hub (Docker) ◀──wss/ws, SSH inside── Agent (Linux / macOS / Windows)
-  xterm.js terminal              ├─ REST API + embedded Svelte UI           PTY / ConPTY shell, scripts
-                                 ├─ SQLite: users, systems, metrics,        SFTP server, services, power
-                                 │  scripts, audit log                      Wake-on-LAN relay, self-update
-                                 └─ /install.sh, /install.ps1, /download/<agent>
+
+Or with Compose, using the [`docker-compose.yml`](docker-compose.yml) from this repository (it also works in CasaOS,
+ZimaOS and Portainer):
+
+```sh
+curl -fLO https://raw.githubusercontent.com/Jackolix/Lotse/main/docker-compose.yml
+docker compose up -d
 ```
 
-- **Agents dial out** to the hub over a WebSocket. Clients need no open ports, and this works behind NAT and
-  reverse proxies.
-- **SSH inside the WebSocket.** The agent is the SSH server and the hub the SSH client. Each side pins the
-  other's Ed25519 key, so the link is authenticated and encrypted even over plain `ws://`. Metrics and
-  control messages are SSH global requests. Each terminal is a standard SSH session channel with a PTY, file
-  transfer is the standard SFTP subsystem, and every script run gets a session channel of its own.
-- **Adaptive reporting.** Agents report every 60 s. While someone has the UI open, the hub switches them to
-  every 2 s, and switches back 15 s after the last viewer leaves.
-- **Storage.** 1-minute averages are kept for 48 h, 10-minute averages for 31 days and 1-hour averages for
-  a year. For about 20 machines the database stays at a few MB.
+1. Open `http://<docker-host>:8090` and create the admin account.
+2. Click **Add system**, pick Linux, macOS or Windows, and run the command it shows on that machine.
+3. The machine appears within seconds.
 
-```
-cmd/hub, cmd/agent          entry points
-cmd/sign                    release tool: signs agent binaries for self-updates
-internal/protocol           hub ⇄ agent messages
-internal/agent              connection loop, config, shell (go-pty), scripts, SFTP, services, power, self-update,
-                            collect/ (gopsutil)
-internal/hub                HTTP API, auth (roles, TOTP, passkeys), agent gateway, terminal bridge, files, scripts,
-                            wake, agent updates, audit, event stream
-internal/hub/store          SQLite schema, metrics rollups, scripts, audit log
-internal/update             signed update manifests, version comparison
-internal/wol                magic packets
-web/                        Svelte 5 + Vite + Tailwind + uPlot, embedded into the hub
-```
+To reach the hub from outside your network, put it behind HTTPS; see
+[Behind a reverse proxy or Cloudflare Tunnel](#behind-a-reverse-proxy-or-cloudflare-tunnel).
+
+## A quick tour
+
+<sub>The screenshots show a demo hub with sample machines. They follow your GitHub theme (light or dark).</sub>
+
+### Every chart for every machine
+
+Live, 1 hour, 24 hours, 7 days, 30 days or a year. Filesystems, services and processes sit below the charts.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/system-dark.png">
+  <img alt="System page for a Proxmox host with CPU, memory, disk usage, disk I/O, network and load charts over 24 hours" src="docs/screenshots/system-light.png">
+</picture>
+
+### Containers without setup
+
+If Docker or Podman runs on the machine, every container shows up with its state, CPU, memory and network. The agent
+reads the local API socket; there is nothing to configure.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/containers-dark.png">
+  <img alt="Container table of a NAS with Immich, Jellyfin, Nextcloud, Paperless and more" src="docs/screenshots/containers-light.png">
+</picture>
+
+### A terminal in the browser
+
+A full terminal on the machine, carried over the agent's encrypted link. Opening one asks for your password again,
+and who opened which shell, and when, is recorded under **Activity**.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/terminal-dark.png">
+  <img alt="Browser terminal running htop on a Debian web server" src="docs/screenshots/terminal-light.png">
+</picture>
+
+### Files
+
+Browse, upload (drag and drop works), download, rename and delete. Transfers stream through the hub over SFTP; the
+hub keeps no copy.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/files-dark.png">
+  <img alt="File browser showing a website's directory on a remote server" src="docs/screenshots/files-light.png">
+</picture>
+
+### One script, many machines
+
+Save the commands you run often, then run them on any number of machines at once. Output streams in live, and each
+machine's result is kept for 90 days.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/run-dark.png">
+  <img alt="A package update run on five Linux machines, with the apt output of one of them" src="docs/screenshots/run-light.png">
+</picture>
+
+### Alerts and notifications
+
+Rules for offline machines, CPU, memory, disk and load, for all machines or just one. Notifications go out when an
+alert fires and when it resolves.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/alerts-dark.png">
+  <img alt="Alerts page with active alerts, rules, notification channels and history" src="docs/screenshots/alerts-light.png">
+</picture>
+
+### Adding a machine
+
+One command per OS. Remote control stays off unless you tick the box, and the choice is stored on the machine
+itself, so the hub cannot turn it on later.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/add-dark.png">
+  <img alt="The Add system dialog with the Linux install command and remote control enabled" src="docs/screenshots/add-light.png">
+</picture>
 
 ## Running the hub
 
@@ -272,6 +403,41 @@ Ethernet.
   themselves.
 - The install command fetches the installer over whatever scheme the hub URL uses. On an untrusted network,
   put the hub behind HTTPS (Caddy, Traefik) and set `HUB_URL=https://…`.
+
+## How it works
+
+```
+Browser ──HTTP, SSE, WebSocket──▶ Hub (Docker) ◀──wss/ws, SSH inside── Agent (Linux / macOS / Windows)
+  xterm.js terminal              ├─ REST API + embedded Svelte UI           PTY / ConPTY shell, scripts
+                                 ├─ SQLite: users, systems, metrics,        SFTP server, services, power
+                                 │  scripts, audit log                      Wake-on-LAN relay, self-update
+                                 └─ /install.sh, /install.ps1, /download/<agent>
+```
+
+- **Agents dial out** to the hub over a WebSocket. Clients need no open ports, and this works behind NAT and
+  reverse proxies.
+- **SSH inside the WebSocket.** The agent is the SSH server and the hub the SSH client. Each side pins the
+  other's Ed25519 key, so the link is authenticated and encrypted even over plain `ws://`. Metrics and
+  control messages are SSH global requests. Each terminal is a standard SSH session channel with a PTY, file
+  transfer is the standard SFTP subsystem, and every script run gets a session channel of its own.
+- **Adaptive reporting.** Agents report every 60 s. While someone has the UI open, the hub switches them to
+  every 2 s, and switches back 15 s after the last viewer leaves.
+- **Storage.** 1-minute averages are kept for 48 h, 10-minute averages for 31 days and 1-hour averages for
+  a year. For about 20 machines the database stays at a few MB.
+
+```
+cmd/hub, cmd/agent          entry points
+cmd/sign                    release tool: signs agent binaries for self-updates
+internal/protocol           hub ⇄ agent messages
+internal/agent              connection loop, config, shell (go-pty), scripts, SFTP, services, power, self-update,
+                            collect/ (gopsutil)
+internal/hub                HTTP API, auth (roles, TOTP, passkeys), agent gateway, terminal bridge, files, scripts,
+                            wake, agent updates, audit, event stream
+internal/hub/store          SQLite schema, metrics rollups, scripts, audit log
+internal/update             signed update manifests, version comparison
+internal/wol                magic packets
+web/                        Svelte 5 + Vite + Tailwind + uPlot, embedded into the hub
+```
 
 ## Releases
 
