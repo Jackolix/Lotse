@@ -31,6 +31,8 @@ Invoke-WebRequest -UseBasicParsing -Uri "$Hub/download/$name-windows-$arch.exe" 
 Move-Item -Force $tmp $exe
 
 $shell = if ($AllowShell) { "true" } else { "false" }
-$updates = if ($NoUpdates) { "true" } else { "false" }
-& $exe install "--hub=$Hub" "--key=$Key" "--token=$Token" "--allow-shell=$shell" "--no-updates=$updates"
+$flags = @("--hub=$Hub", "--key=$Key", "--token=$Token", "--allow-shell=$shell")
+# Only when asked: agents older than 0.4 do not know the flag.
+if ($NoUpdates) { $flags += "--no-updates" }
+& $exe install @flags
 if ($LASTEXITCODE -ne 0) { throw "agent installation failed" }

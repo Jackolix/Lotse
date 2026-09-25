@@ -44,6 +44,10 @@ func (h *Hub) getAgentBinary(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "unknown agent binary")
 		return
 	}
+	// The name stays the same across versions, so shared caches must not keep it.
+	// Cloudflare, for one, caches .exe files for hours unless told otherwise, and
+	// installers would then get an agent older than the hub.
+	w.Header().Set("Cache-Control", "no-cache")
 	file := filepath.Join(h.cfg.AgentDir, name)
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))

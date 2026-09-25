@@ -80,4 +80,9 @@ if [ -z "$BIN" ]; then
 fi
 echo "Installed $BIN"
 
-"$BIN" install --hub="$HUB" --key="$KEY" --token="$TOKEN" --allow-shell="$ALLOW_SHELL" --no-updates="$NO_UPDATES"
+# --no-updates only when asked: agents older than 0.4 do not know the flag.
+if [ "$NO_UPDATES" = true ]; then
+	"$BIN" install --hub="$HUB" --key="$KEY" --token="$TOKEN" --allow-shell="$ALLOW_SHELL" --no-updates
+else
+	"$BIN" install --hub="$HUB" --key="$KEY" --token="$TOKEN" --allow-shell="$ALLOW_SHELL"
+fi

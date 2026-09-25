@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -329,5 +330,20 @@ func TestBuildSeriesMarksGaps(t *testing.T) {
 	out, _ := json.Marshal(s.Values["cpu"])
 	if string(out) != "[0,0,null,0]" {
 		t.Fatalf("cpu = %s", out)
+	}
+}
+
+// Agent binaries keep their name across versions, so caches in front of the hub
+// (e.g. Cloudflare, which caches .exe files) must not serve an old one.
+func TestAgentDownloadsAreNotCached(t *testing.T) {
+	h, srv := newTestHub(t)
+	os.WriteFile(filepath.Join(h.cfg.AgentDir, "lotse-agent-windows-amd64.exe"), []byte("MZ"), 0o644)
+	resp, err := http.Get(srv.URL + "/download/lotse-agent-windows-amd64.exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Cache-Control") != "no-cache" {
+		t.Fatalf("status %d, Cache-Control %q", resp.StatusCode, resp.Header.Get("Cache-Control"))
 	}
 }
