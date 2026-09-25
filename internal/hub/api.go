@@ -99,7 +99,7 @@ func (h *Hub) Handler() http.Handler {
 	mux.HandleFunc("GET /install.ps1", h.getInstallScript)
 	mux.HandleFunc("GET /download/{file}", h.getAgentBinary)
 	mux.Handle("/", h.static())
-	return securityHeaders(sameOrigin(mux))
+	return h.realIP(securityHeaders(sameOrigin(mux)))
 }
 
 func securityHeaders(next http.Handler) http.Handler {

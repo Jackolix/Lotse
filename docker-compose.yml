@@ -13,6 +13,10 @@ services:
       # Address agents use to reach the hub, pre-filled in the "Add system" dialog.
       # Leave empty to use whatever address the browser used to open the UI.
       HUB_URL: ""
+      # Behind a reverse proxy or Cloudflare Tunnel: the proxy's IP (or CIDR range),
+      # so logins and the activity log see real client addresses. A proxy on this
+      # same machine connects through the Docker network's gateway, e.g. 172.18.0.1.
+      # HUB_TRUSTED_PROXIES: "172.18.0.1"
       # Owner of the files in /data (default 65532). Set to your user's IDs if you
       # want to manage a bind-mounted folder, e.g. 1000.
       # PUID: "1000"

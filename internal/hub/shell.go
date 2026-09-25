@@ -194,6 +194,27 @@ func (h *Hub) handleShell(w http.ResponseWriter, r *http.Request, s *store.Sessi
 		}
 	}()
 
+	go func() {
+		// Proxies drop quiet WebSockets (Cloudflare after about 100 s, nginx after 60 s),
+		// which would end a terminal left idle. A missing pong means the browser is gone.
+		ping := time.NewTicker(25 * time.Second)
+		defer ping.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ping.C:
+				pctx, pcancel := context.WithTimeout(ctx, 20*time.Second)
+				err := ws.Ping(pctx)
+				pcancel()
+				if err != nil {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+
 	var status *int
 	exited := false
 	select {

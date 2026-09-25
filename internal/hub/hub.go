@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,6 +40,9 @@ type Config struct {
 	DataDir   string // HUB_DATA_DIR, SQLite database and hub key
 	PublicURL string // HUB_URL, how agents reach the hub; derived from the browser's URL when empty
 	AgentDir  string // HUB_AGENT_DIR, prebuilt agent binaries served at /download
+	// TrustedProxies (HUB_TRUSTED_PROXIES) lists the reverse proxies, as IPs or CIDRs
+	// separated by commas, whose X-Forwarded-For header names the real client.
+	TrustedProxies string
 }
 
 func ConfigFromEnv() Config {
@@ -53,6 +57,8 @@ func ConfigFromEnv() Config {
 		DataDir:   env("HUB_DATA_DIR", "./data"),
 		PublicURL: strings.TrimSuffix(os.Getenv("HUB_URL"), "/"),
 		AgentDir:  env("HUB_AGENT_DIR", "./dist/agents"),
+
+		TrustedProxies: os.Getenv("HUB_TRUSTED_PROXIES"),
 	}
 }
 
@@ -63,6 +69,7 @@ type Hub struct {
 	signer  ssh.Signer
 	broker  *broker
 	limiter *loginLimiter
+	proxies []netip.Prefix // trusted reverse proxies
 	setupMu sync.Mutex
 	agentWG sync.WaitGroup
 
@@ -87,6 +94,10 @@ type Hub struct {
 }
 
 func New(cfg Config, log *slog.Logger) (*Hub, error) {
+	proxies, err := parseProxies(cfg.TrustedProxies)
+	if err != nil {
+		return nil, fmt.Errorf("HUB_TRUSTED_PROXIES: %w", err)
+	}
 	st, signer, err := openData(cfg)
 	if err != nil {
 		return nil, err
@@ -97,6 +108,7 @@ func New(cfg Config, log *slog.Logger) (*Hub, error) {
 		store:    st,
 		signer:   signer,
 		limiter:  newLoginLimiter(),
+		proxies:  proxies,
 		totpUsed: map[int64]int64{},
 		agents:   map[int64]*agentConn{},
 		states:   map[int64]*sysState{},

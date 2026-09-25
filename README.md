@@ -65,9 +65,31 @@ Open `http://<docker-host>:8090`. On first visit you create the admin account. M
 | `HUB_DATA_DIR`  | `/data`        | Database and hub key (`hub_ed25519`); **back this up**                    |
 | `HUB_AGENT_DIR` | `/app/agents`  | Agent binaries served for installation                                    |
 | `PUID`, `PGID`  | `65532`        | User the hub switches to after taking ownership of `/data`               |
+| `HUB_TRUSTED_PROXIES` | _(none)_ | Reverse proxies whose `X-Forwarded-For` names the client, e.g. `192.168.1.20` or `172.18.0.0/16` |
 
 The hub key in `/data/hub_ed25519` is the identity every agent pins. If you lose it, all agents must be
 reinstalled.
+
+### Behind a reverse proxy or Cloudflare Tunnel
+
+The hub speaks plain HTTP, so a proxy in front (Caddy, Traefik, Nginx Proxy Manager, cloudflared) provides HTTPS.
+
+- Set `HUB_TRUSTED_PROXIES` to the proxy's address, as the hub sees it. Otherwise every client seems to come from the
+  proxy: a stranger's failed logins lock out everyone using that route, and the activity log shows only the proxy.
+  To find the address, sign in through the proxy before setting it and look under **Activity**. A proxy on another
+  machine shows up with its LAN IP. A proxy on the Docker host itself (e.g. cloudflared pointed at
+  `localhost:8090`) shows up as the gateway of the hub's Docker network:
+  `docker inspect lotse-hub --format '{{range .NetworkSettings.Networks}}{{.Gateway}}{{end}}'`. With
+  `network_mode: host`, it is `127.0.0.1,::1`.
+- Set `HUB_URL=https://…` so notifications link to the public address and **Add system** suggests it.
+- The proxy must keep the original `Host` header (the default for all of the above). Sign-in, passkeys and terminals
+  check the browser's origin against it.
+- Passkeys belong to the hostname they were created on, and browsers only offer them over HTTPS. Add them through
+  the public address.
+- If the web UI is reachable from the internet, it can open root shells on every machine installed with
+  `--allow-shell`. Turn on two-factor login or passkeys. Better still, put an access gate in front (Cloudflare Access,
+  Authelia, …). Leave `/api/agent/connect`, `/install.sh`, `/install.ps1` and `/download/*` outside it, since agents
+  and installers cannot pass a login page.
 
 ## Adding machines
 
