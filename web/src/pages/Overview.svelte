@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { can } from '../lib/auth.svelte'
   import AddSystemDialog from '../lib/components/AddSystemDialog.svelte'
   import Icon from '../lib/components/Icon.svelte'
   import Meter from '../lib/components/Meter.svelte'
@@ -6,7 +7,7 @@
   import { ago, archLabel, bytes, duration, osLabel, rate, ratio } from '../lib/format'
   import { link } from '../lib/router.svelte'
   import { openMenu } from '../lib/menu.svelte'
-  import { systemMenu } from '../lib/systemActions'
+  import { systemMenu, updateAgent } from '../lib/systemActions'
   import { systems } from '../lib/systems.svelte'
 
   let adding = $state(false)
@@ -20,6 +21,15 @@
     )
   })
   const online = $derived(systems.list.filter((s) => s.online).length)
+  const outdated = $derived(systems.list.filter((s) => s.online && s.update))
+  let updating = $state(false)
+
+  // One after the other: each agent restarts after its update.
+  async function updateAll() {
+    updating = true
+    for (const s of outdated) await updateAgent(s)
+    updating = false
+  }
 
   // Shared by the header row and every system row (cards on phones, a table from md up).
   const cols =
@@ -40,8 +50,26 @@
       <input class="input pl-8" placeholder="Filter" bind:value={query} />
     </label>
   {/if}
-  <button class="btn btn-primary" onclick={() => (adding = true)}><Icon name="plus" /> Add system</button>
+  {#if can('admin')}
+    <button class="btn btn-primary" onclick={() => (adding = true)}><Icon name="plus" /> Add system</button>
+  {/if}
 </div>
+
+{#if outdated.length && can('admin')}
+  <p
+    class="mb-4 flex flex-wrap items-center gap-2 rounded-lg px-3 py-2 text-sm"
+    style:background="color-mix(in oklab, var(--accent) 10%, var(--surface))"
+  >
+    <Icon name="package" size={14} class="text-accent" />
+    <span>
+      {outdated.length === 1 ? `${outdated[0].name} runs an older agent.` : `${outdated.length} systems run an older agent.`}
+      The hub has version {outdated[0].update}, signed for self-updates.
+    </span>
+    <button class="btn ml-auto h-7 text-xs" onclick={updateAll} disabled={updating}>
+      {updating ? 'Updating…' : outdated.length === 1 ? 'Update' : `Update all ${outdated.length}`}
+    </button>
+  </p>
+{/if}
 
 {#if !systems.loaded}
   <p class="text-sm text-muted">Loading…</p>
@@ -52,7 +80,11 @@
     <p class="mt-1 max-w-sm text-sm text-ink-2">
       Install the agent on a Linux, macOS or Windows machine and it shows up here within seconds.
     </p>
-    <button class="btn btn-primary mt-5" onclick={() => (adding = true)}><Icon name="plus" /> Add your first system</button>
+    {#if can('admin')}
+      <button class="btn btn-primary mt-5" onclick={() => (adding = true)}><Icon name="plus" /> Add your first system</button>
+    {:else}
+      <p class="mt-3 text-sm text-muted">An administrator can add them.</p>
+    {/if}
   </section>
 {:else}
   <div class="card overflow-hidden">

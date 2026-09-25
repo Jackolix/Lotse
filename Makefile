@@ -25,8 +25,9 @@ agents:
 			-o dist/agents/lotse-agent-$$os-$$arch$$ext ./cmd/agent || exit 1; \
 	done
 
-# Release assets: agents for every platform, the hub for Linux, and checksums.
-# Needs the web UI built first (make web), since the hub embeds it.
+# Release assets: agents for every platform (signed when LOTSE_SIGNING_KEY is set),
+# the hub for Linux, and checksums. Needs the web UI built first (make web), since
+# the hub embeds it.
 release:
 	@rm -rf dist/release && mkdir -p dist/release
 	@for p in $(PLATFORMS); do \
@@ -40,6 +41,7 @@ release:
 		CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -trimpath -ldflags "$(LDFLAGS)" \
 			-o dist/release/lotse-hub-linux-$$arch ./cmd/hub || exit 1; \
 	done
+	go run ./cmd/sign -optional -version "$(VERSION)" dist/release/lotse-agent-*
 	cd dist/release && sha256sum * > sha256sums.txt
 
 test:

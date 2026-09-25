@@ -91,6 +91,9 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: VERSION=${{ steps.v.outputs.version }}
+          # Signs the agents in release images, so hubs can update them.
+          secrets: |
+            signing_key=${{ secrets.LOTSE_SIGNING_KEY }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -115,6 +118,8 @@ jobs:
         working-directory: web
         run: npm ci --no-audit --no-fund && npm run build
       - name: Build binaries
+        env:
+          LOTSE_SIGNING_KEY: ${{ secrets.LOTSE_SIGNING_KEY }}
         run: make release VERSION="${GITHUB_REF_NAME#v}"
       - name: Publish release
         env:

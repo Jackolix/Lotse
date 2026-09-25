@@ -23,14 +23,20 @@ func (h *Hub) audit(r *http.Request, username, action string, sys *store.System,
 	}
 }
 
-func (h *Hub) getAudit(w http.ResponseWriter, r *http.Request, _ *store.Session) {
+// getAudit returns the activity log: all of it for administrators, their own
+// entries for everyone else.
+func (h *Hub) getAudit(w http.ResponseWriter, r *http.Request, s *store.Session) {
 	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
+	user := s.Username
+	if s.Can(store.RoleAdmin) {
+		user = ""
+	}
 	// Fetch one extra row to tell the UI whether there is more.
-	entries, err := h.store.Audit(before, limit+1)
+	entries, err := h.store.AuditOf(user, before, limit+1)
 	if err != nil {
 		h.internalError(w, err)
 		return

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, ApiError, type Alert, type AlertRule, type Notifier } from '../lib/api'
+  import { can } from '../lib/auth.svelte'
   import ChannelDialog from '../lib/components/ChannelDialog.svelte'
   import Icon from '../lib/components/Icon.svelte'
   import RuleDialog from '../lib/components/RuleDialog.svelte'
@@ -92,13 +93,14 @@
     }
   }
 
-  const ruleMenu = (r: AlertRule): MenuEntry[] => [
+  const admin = $derived(can('admin'))
+  const ruleMenu = (r: AlertRule): MenuEntry[] => !admin ? [] : [
     { label: 'Edit…', icon: 'pencil', action: () => editRule(r) },
     { label: r.enabled ? 'Disable' : 'Enable', icon: 'power', action: () => toggleRule(r) },
     'separator',
     { label: 'Delete…', icon: 'trash', danger: true, action: () => deleteRule(r) },
   ]
-  const channelMenu = (c: Notifier): MenuEntry[] => [
+  const channelMenu = (c: Notifier): MenuEntry[] => !admin ? [] : [
     { label: 'Send test', icon: 'send', action: () => testChannel(c) },
     { label: 'Edit…', icon: 'pencil', action: () => editChannel(c) },
     'separator',
@@ -106,12 +108,16 @@
   ]
   const alertMenu = (a: Alert): MenuEntry[] => [
     { label: 'Open system', icon: 'server', disabled: !systems.get(a.system_id), action: () => navigate(`/systems/${a.system_id}`) },
-    { label: 'Edit rule…', icon: 'pencil', disabled: !rules.some((r) => r.id === a.rule_id), action: () => editRule(rules.find((r) => r.id === a.rule_id)!) },
+    ...(admin
+      ? [{ label: 'Edit rule…', icon: 'pencil' as const, disabled: !rules.some((r) => r.id === a.rule_id), action: () => editRule(rules.find((r) => r.id === a.rule_id)!) }]
+      : []),
   ]
 </script>
 
 <h1 class="text-xl font-semibold">Alerts</h1>
-<p class="text-sm text-ink-2">Rules watch every system; channels deliver the notifications.</p>
+<p class="text-sm text-ink-2">
+  Rules watch every system; channels deliver the notifications.{admin ? '' : ' Only administrators can change them.'}
+</p>
 
 <section class="card mt-5">
   <h2 class="px-4 pt-4 font-semibold">Active</h2>
@@ -139,16 +145,17 @@
   <section class="card min-w-0">
     <div class="flex items-center justify-between px-4 pt-4">
       <h2 class="font-semibold">Rules</h2>
-      <button class="btn h-8" onclick={() => editRule(null)}><Icon name="plus" size={14} /> Add rule</button>
+      {#if admin}<button class="btn h-8" onclick={() => editRule(null)}><Icon name="plus" size={14} /> Add rule</button>{/if}
     </div>
     <ul class="mt-3">
       {#each rules as r (r.id)}
-        <li class="flex items-center gap-3 border-t border-line px-4 py-2.5 text-sm" oncontextmenu={(e) => openMenu(e, ruleMenu(r))}>
+        <li class="flex items-center gap-3 border-t border-line px-4 py-2.5 text-sm" oncontextmenu={(e) => admin && openMenu(e, ruleMenu(r))}>
           <input
             type="checkbox"
             role="switch"
             class="size-4 shrink-0 accent-[var(--accent)]"
             checked={r.enabled}
+            disabled={!admin}
             onchange={() => toggleRule(r)}
             aria-label="{r.enabled ? 'Disable' : 'Enable'} {r.name}"
           />
@@ -159,7 +166,7 @@
               {r.notifiers.length ? `notifies ${r.notifiers.map(channelName).filter(Boolean).join(', ')}` : 'shown in Lotse only'}
             </div>
           </div>
-          <button class="btn h-8 px-2" onclick={() => editRule(r)} aria-label="Edit {r.name}"><Icon name="pencil" size={14} /></button>
+          {#if admin}<button class="btn h-8 px-2" onclick={() => editRule(r)} aria-label="Edit {r.name}"><Icon name="pencil" size={14} /></button>{/if}
         </li>
       {:else}
         <li class="border-t border-line px-4 py-4 text-sm text-muted">No rules. Add one to get alerted.</li>
@@ -170,11 +177,11 @@
   <section class="card min-w-0">
     <div class="flex items-center justify-between px-4 pt-4">
       <h2 class="font-semibold">Notification channels</h2>
-      <button class="btn h-8" onclick={() => editChannel(null)}><Icon name="plus" size={14} /> Add channel</button>
+      {#if admin}<button class="btn h-8" onclick={() => editChannel(null)}><Icon name="plus" size={14} /> Add channel</button>{/if}
     </div>
     <ul class="mt-3">
       {#each channels as c (c.id)}
-        <li class="flex items-center gap-3 border-t border-line px-4 py-2.5 text-sm" oncontextmenu={(e) => openMenu(e, channelMenu(c))}>
+        <li class="flex items-center gap-3 border-t border-line px-4 py-2.5 text-sm" oncontextmenu={(e) => admin && openMenu(e, channelMenu(c))}>
           <div class="min-w-0 flex-1" class:opacity-50={!c.enabled}>
             <div class="font-medium">{c.name} <span class="text-xs font-normal text-muted">{c.type}</span></div>
             {#if c.last_error}
@@ -185,8 +192,10 @@
               <div class="text-xs text-muted">Nothing sent yet</div>
             {/if}
           </div>
-          <button class="btn h-8 px-2" onclick={() => testChannel(c)} title="Send a test notification" aria-label="Test {c.name}"><Icon name="send" size={14} /></button>
-          <button class="btn h-8 px-2" onclick={() => editChannel(c)} aria-label="Edit {c.name}"><Icon name="pencil" size={14} /></button>
+          {#if admin}
+            <button class="btn h-8 px-2" onclick={() => testChannel(c)} title="Send a test notification" aria-label="Test {c.name}"><Icon name="send" size={14} /></button>
+            <button class="btn h-8 px-2" onclick={() => editChannel(c)} aria-label="Edit {c.name}"><Icon name="pencil" size={14} /></button>
+          {/if}
         </li>
       {:else}
         <li class="border-t border-line px-4 py-4 text-sm text-muted">

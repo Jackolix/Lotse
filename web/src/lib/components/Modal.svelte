@@ -12,9 +12,13 @@
 
   let el: HTMLDialogElement
 
+  // Fields marked data-autofocus get the focus each time the dialog opens; the
+  // autofocus attribute only works once, when the always-mounted dialog is created.
   $effect(() => {
-    if (open && !el.open) el.showModal()
-    else if (!open && el.open) el.close()
+    if (open && !el.open) {
+      el.showModal()
+      queueMicrotask(() => el.querySelector<HTMLElement>('[data-autofocus]')?.focus())
+    } else if (!open && el.open) el.close()
   })
 </script>
 

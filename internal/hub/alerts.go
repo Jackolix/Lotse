@@ -471,7 +471,7 @@ type notifierDTO struct {
 	Config map[string]any `json:"config"`
 }
 
-func (h *Hub) getNotifiers(w http.ResponseWriter, _ *http.Request, _ *store.Session) {
+func (h *Hub) getNotifiers(w http.ResponseWriter, _ *http.Request, s *store.Session) {
 	list, err := h.store.Notifiers()
 	if err != nil {
 		h.internalError(w, err)
@@ -479,9 +479,13 @@ func (h *Hub) getNotifiers(w http.ResponseWriter, _ *http.Request, _ *store.Sess
 	}
 	out := make([]notifierDTO, len(list))
 	for i, n := range list {
-		var cfg notifierConfig
-		_ = json.Unmarshal([]byte(n.Config), &cfg)
-		out[i] = notifierDTO{n, cfg.masked()}
+		out[i] = notifierDTO{n, map[string]any{}}
+		// Webhook URLs are secrets too; only administrators, who edit channels, see them.
+		if s.Can(store.RoleAdmin) {
+			var cfg notifierConfig
+			_ = json.Unmarshal([]byte(n.Config), &cfg)
+			out[i].Config = cfg.masked()
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

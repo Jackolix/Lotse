@@ -24,6 +24,19 @@
     clipboard: 'M9 3h6v4H9z|M9 5H6v16h12V5h-3',
     bell: 'M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9|M10.3 21a1.9 1.9 0 0 0 3.4 0',
     send: 'M22 2 11 13|M22 2l-7 20-4-9-9-4z',
+    key: 'M8 11a4 4 0 1 0 0 8a4 4 0 1 0 0-8|M10.8 12.2 20 3|M16 7l3 3|M18 5l2 2',
+    folder: 'M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z',
+    'folder-plus': 'M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z|M12 10v6|M9 13h6',
+    file: 'M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z|M14 3v5h5',
+    upload: 'M12 15V3|M7 8l5-5 5 5|M5 21h14',
+    download: 'M12 3v12|M7 10l5 5 5-5|M5 21h14',
+    play: 'M7 4l13 8-13 8z',
+    code: 'M8 7l-5 5 5 5|M16 7l5 5-5 5',
+    users: 'M9 11a4 4 0 1 0 0-8a4 4 0 1 0 0 8|M2 21a7 7 0 0 1 14 0|M16 3.5a4 4 0 0 1 0 7|M22 21a7 7 0 0 0-4-6.3',
+    'arrow-up': 'M12 19V5|M5 12l7-7 7 7',
+    square: 'M6 6h12v12H6z',
+    'chevron-down': 'M6 9l6 6 6-6',
+    package: 'M12 3l8 4.5v9L12 21l-8-4.5v-9z|M4 7.5l8 4.5 8-4.5|M12 12v9',
   } as const
   export type IconName = keyof typeof paths
 </script>

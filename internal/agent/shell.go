@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -15,14 +17,21 @@ import (
 	"github.com/Jackolix/Lotse/internal/protocol"
 )
 
-// maxShells bounds concurrent remote shells on one machine.
-const maxShells = 8
+// maxSessions bounds concurrent session channels (shells, file transfers, scripts)
+// on one machine.
+const maxSessions = 16
 
-// handleChannels serves SSH channels opened by the hub. The only kind is "session",
-// accepted only if the machine's owner allowed remote shells when installing.
+// handleChannels serves SSH channels opened by the hub: "session" channels, accepted
+// only if the machine's owner allowed remote control when installing, and signed
+// agent updates.
 func (a *Agent) handleChannels(chans <-chan ssh.NewChannel) {
 	for nc := range chans {
-		if nc.ChannelType() != "session" {
+		switch nc.ChannelType() {
+		case "session":
+		case protocol.ChanUpdate:
+			go a.handleUpdate(nc)
+			continue
+		default:
 			nc.Reject(ssh.UnknownChannelType, "unsupported channel type")
 			continue
 		}
@@ -30,34 +39,38 @@ func (a *Agent) handleChannels(chans <-chan ssh.NewChannel) {
 			nc.Reject(ssh.Prohibited, "remote shell is disabled on this machine; reinstall the agent with --allow-shell to enable it")
 			continue
 		}
-		if a.shells.Add(1) > maxShells {
-			a.shells.Add(-1)
-			nc.Reject(ssh.ResourceShortage, "too many open shells")
+		if a.sessions.Add(1) > maxSessions {
+			a.sessions.Add(-1)
+			nc.Reject(ssh.ResourceShortage, "too many open sessions")
 			continue
 		}
 		ch, reqs, err := nc.Accept()
 		if err != nil {
-			a.shells.Add(-1)
+			a.sessions.Add(-1)
 			continue
 		}
 		go func() {
-			defer a.shells.Add(-1)
+			defer a.sessions.Add(-1)
 			a.serveSession(ch, reqs)
 		}()
 	}
 }
 
-// serveSession implements the subset of RFC 4254 a terminal needs:
-// pty-req, shell and window-change.
+// serveSession implements the parts of RFC 4254 a terminal needs (pty-req, shell,
+// window-change), the SFTP subsystem, and protocol.ReqScript. Each channel runs one
+// of them.
 func (a *Agent) serveSession(ch ssh.Channel, reqs <-chan *ssh.Request) {
 	defer ch.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel() // stops a script when the hub closes the channel
 	var ptyReq *protocol.PtyRequest
 	var sh *shell
+	started := false
 	for req := range reqs {
 		switch req.Type {
 		case "pty-req":
 			var p protocol.PtyRequest
-			if sh != nil || ssh.Unmarshal(req.Payload, &p) != nil {
+			if started || ssh.Unmarshal(req.Payload, &p) != nil {
 				req.Reply(false, nil)
 				continue
 			}
@@ -70,7 +83,7 @@ func (a *Agent) serveSession(ch ssh.Channel, reqs <-chan *ssh.Request) {
 			}
 			req.Reply(true, nil)
 		case "shell":
-			if sh != nil || ptyReq == nil {
+			if started || ptyReq == nil {
 				req.Reply(false, nil)
 				continue
 			}
@@ -81,6 +94,7 @@ func (a *Agent) serveSession(ch ssh.Channel, reqs <-chan *ssh.Request) {
 				req.Reply(false, nil)
 				return
 			}
+			started = true
 			req.Reply(true, nil)
 			a.log.Info("remote shell opened", "shell", sh.path, "pid", sh.cmd.Process.Pid)
 			go func() {
@@ -89,7 +103,32 @@ func (a *Agent) serveSession(ch ssh.Channel, reqs <-chan *ssh.Request) {
 				ch.SendRequest("exit-status", false, ssh.Marshal(protocol.ExitStatus{Status: status}))
 				ch.Close()
 			}()
-		default: // env, exec, subsystem, x11-req, ...
+		case "subsystem":
+			var sub struct{ Name string }
+			if started || ssh.Unmarshal(req.Payload, &sub) != nil || sub.Name != protocol.SubsystemSFTP {
+				req.Reply(false, nil)
+				continue
+			}
+			started = true
+			req.Reply(true, nil)
+			go func() {
+				a.serveSFTP(ch)
+				ch.Close()
+			}()
+		case protocol.ReqScript:
+			var msg protocol.ScriptMsg
+			if started || json.Unmarshal(req.Payload, &msg) != nil {
+				req.Reply(false, nil)
+				continue
+			}
+			started = true
+			req.Reply(true, nil)
+			go func() {
+				status := a.runScript(ctx, ch, msg)
+				ch.SendRequest("exit-status", false, ssh.Marshal(protocol.ExitStatus{Status: status}))
+				ch.Close()
+			}()
+		default: // env, exec, x11-req, ...
 			req.Reply(false, nil)
 		}
 	}

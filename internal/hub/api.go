@@ -25,35 +25,71 @@ func (h *Hub) Handler() http.Handler {
 	mux.HandleFunc("GET /api/setup", h.getSetup)
 	mux.HandleFunc("POST /api/setup", h.postSetup)
 	mux.HandleFunc("POST /api/login", h.postLogin)
+	mux.HandleFunc("POST /api/login/passkey-options", h.postLoginPasskeyOptions)
 	mux.HandleFunc("POST /api/logout", h.postLogout)
-	mux.HandleFunc("GET /api/me", h.requireUser(h.getMe))
-	mux.HandleFunc("POST /api/me/password", h.requireUser(h.postPassword))
-	mux.HandleFunc("POST /api/me/totp/setup", h.requireUser(h.postTOTPSetup))
-	mux.HandleFunc("POST /api/me/totp/enable", h.requireUser(h.postTOTPEnable))
-	mux.HandleFunc("POST /api/me/totp/disable", h.requireUser(h.postTOTPDisable))
-	mux.HandleFunc("POST /api/elevate", h.requireUser(h.postElevate))
-	mux.HandleFunc("GET /api/audit", h.requireUser(h.getAudit))
-	mux.HandleFunc("GET /api/events", h.requireUser(h.handleEvents))
-	mux.HandleFunc("GET /api/systems", h.requireUser(h.getSystems))
-	mux.HandleFunc("GET /api/systems/{id}", h.requireUser(h.getSystem))
-	mux.HandleFunc("PATCH /api/systems/{id}", h.requireUser(h.patchSystem))
-	mux.HandleFunc("DELETE /api/systems/{id}", h.requireUser(h.deleteSystem))
-	mux.HandleFunc("GET /api/systems/{id}/metrics", h.requireUser(h.getMetrics))
-	mux.HandleFunc("GET /api/systems/{id}/shell", h.requireUser(h.handleShell))
-	mux.HandleFunc("POST /api/systems/{id}/wake", h.requireUser(h.postWake))
-	mux.HandleFunc("GET /api/systems/{id}/processes", h.requireUser(h.getProcesses))
-	mux.HandleFunc("POST /api/systems/{id}/processes/{pid}/signal", h.requireUser(h.postSignal))
-	mux.HandleFunc("POST /api/enroll", h.requireUser(h.postEnroll))
-	mux.HandleFunc("GET /api/alerts", h.requireUser(h.getAlerts))
-	mux.HandleFunc("GET /api/alert-rules", h.requireUser(h.getAlertRules))
-	mux.HandleFunc("POST /api/alert-rules", h.requireUser(h.saveAlertRule))
-	mux.HandleFunc("PUT /api/alert-rules/{id}", h.requireUser(h.saveAlertRule))
-	mux.HandleFunc("DELETE /api/alert-rules/{id}", h.requireUser(h.deleteAlertRule))
-	mux.HandleFunc("GET /api/notifiers", h.requireUser(h.getNotifiers))
-	mux.HandleFunc("POST /api/notifiers", h.requireUser(h.saveNotifier))
-	mux.HandleFunc("POST /api/notifiers/test", h.requireUser(h.testNotifier))
-	mux.HandleFunc("PUT /api/notifiers/{id}", h.requireUser(h.saveNotifier))
-	mux.HandleFunc("DELETE /api/notifiers/{id}", h.requireUser(h.deleteNotifier))
+
+	// Every role: the own account, and looking at systems and alerts.
+	viewer := func(fn sessionHandler) http.HandlerFunc { return h.requireRole(store.RoleViewer, fn) }
+	mux.HandleFunc("GET /api/me", viewer(h.getMe))
+	mux.HandleFunc("POST /api/me/password", viewer(h.postPassword))
+	mux.HandleFunc("POST /api/me/totp/setup", viewer(h.postTOTPSetup))
+	mux.HandleFunc("POST /api/me/totp/enable", viewer(h.postTOTPEnable))
+	mux.HandleFunc("POST /api/me/totp/disable", viewer(h.postTOTPDisable))
+	mux.HandleFunc("GET /api/me/passkeys", viewer(h.getPasskeys))
+	mux.HandleFunc("POST /api/me/passkeys", viewer(h.postPasskey))
+	mux.HandleFunc("POST /api/me/passkeys/options", viewer(h.postPasskeyOptions))
+	mux.HandleFunc("PATCH /api/me/passkeys/{id}", viewer(h.patchPasskey))
+	mux.HandleFunc("DELETE /api/me/passkeys/{id}", viewer(h.deletePasskey))
+	mux.HandleFunc("POST /api/elevate", viewer(h.postElevate))
+	mux.HandleFunc("GET /api/audit", viewer(h.getAudit))
+	mux.HandleFunc("GET /api/events", viewer(h.handleEvents))
+	mux.HandleFunc("GET /api/systems", viewer(h.getSystems))
+	mux.HandleFunc("GET /api/systems/{id}", viewer(h.getSystem))
+	mux.HandleFunc("GET /api/systems/{id}/metrics", viewer(h.getMetrics))
+	mux.HandleFunc("GET /api/systems/{id}/processes", viewer(h.getProcesses))
+	mux.HandleFunc("GET /api/systems/{id}/services", viewer(h.getServices))
+	mux.HandleFunc("GET /api/alerts", viewer(h.getAlerts))
+	mux.HandleFunc("GET /api/alert-rules", viewer(h.getAlertRules))
+	mux.HandleFunc("GET /api/notifiers", viewer(h.getNotifiers))
+
+	// Operators act on machines.
+	operator := func(fn sessionHandler) http.HandlerFunc { return h.requireRole(store.RoleOperator, fn) }
+	mux.HandleFunc("PATCH /api/systems/{id}", operator(h.patchSystem))
+	mux.HandleFunc("GET /api/systems/{id}/shell", h.requireUser(h.handleShell)) // reports a missing role on the socket
+	mux.HandleFunc("POST /api/systems/{id}/wake", operator(h.postWake))
+	mux.HandleFunc("POST /api/systems/{id}/power", operator(h.postPower))
+	mux.HandleFunc("POST /api/systems/{id}/services", operator(h.postService))
+	mux.HandleFunc("POST /api/systems/{id}/processes/{pid}/signal", operator(h.postSignal))
+	mux.HandleFunc("GET /api/systems/{id}/files", operator(h.getFiles))
+	mux.HandleFunc("GET /api/systems/{id}/files/download", operator(h.downloadFile))
+	mux.HandleFunc("PUT /api/systems/{id}/files", operator(h.putFile))
+	mux.HandleFunc("POST /api/systems/{id}/files", operator(h.postFileAction))
+	mux.HandleFunc("GET /api/scripts", operator(h.getScripts))
+	mux.HandleFunc("POST /api/scripts", operator(h.saveScript))
+	mux.HandleFunc("PUT /api/scripts/{id}", operator(h.saveScript))
+	mux.HandleFunc("DELETE /api/scripts/{id}", operator(h.deleteScript))
+	mux.HandleFunc("GET /api/runs", operator(h.getRuns))
+	mux.HandleFunc("POST /api/runs", operator(h.postRun))
+	mux.HandleFunc("GET /api/runs/{id}", operator(h.getRun))
+	mux.HandleFunc("GET /api/runs/{id}/events", operator(h.getRunEvents))
+	mux.HandleFunc("POST /api/runs/{id}/cancel", operator(h.postRunCancel))
+
+	// Administrators manage the hub: users, systems, alerts and agent updates.
+	admin := func(fn sessionHandler) http.HandlerFunc { return h.requireRole(store.RoleAdmin, fn) }
+	mux.HandleFunc("DELETE /api/systems/{id}", admin(h.deleteSystem))
+	mux.HandleFunc("POST /api/systems/{id}/update", admin(h.postAgentUpdate))
+	mux.HandleFunc("POST /api/enroll", admin(h.postEnroll))
+	mux.HandleFunc("POST /api/alert-rules", admin(h.saveAlertRule))
+	mux.HandleFunc("PUT /api/alert-rules/{id}", admin(h.saveAlertRule))
+	mux.HandleFunc("DELETE /api/alert-rules/{id}", admin(h.deleteAlertRule))
+	mux.HandleFunc("POST /api/notifiers", admin(h.saveNotifier))
+	mux.HandleFunc("POST /api/notifiers/test", admin(h.testNotifier))
+	mux.HandleFunc("PUT /api/notifiers/{id}", admin(h.saveNotifier))
+	mux.HandleFunc("DELETE /api/notifiers/{id}", admin(h.deleteNotifier))
+	mux.HandleFunc("GET /api/users", admin(h.getUsers))
+	mux.HandleFunc("POST /api/users", admin(h.postUser))
+	mux.HandleFunc("PATCH /api/users/{id}", admin(h.patchUser))
+	mux.HandleFunc("DELETE /api/users/{id}", admin(h.deleteUser))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 	})
@@ -106,6 +142,7 @@ type systemDTO struct {
 	Info         protocol.SystemInfo `json:"info"`
 	Features     []string            `json:"features"` // of the connected agent; empty while offline
 	AgentVersion string              `json:"agent_version"`
+	Update       string              `json:"update,omitempty"` // newer signed agent version the hub can install
 	LastSeen     int64               `json:"last_seen"`
 	CreatedAt    int64               `json:"created_at"`
 	Metrics      *protocol.Metrics   `json:"metrics"`
@@ -125,6 +162,7 @@ func (h *Hub) toDTO(s *store.System) systemDTO {
 	}
 	st := h.states[s.ID]
 	h.mu.Unlock()
+	d.Update = h.updateVersion(s, d.Info, d.Features)
 	if st != nil {
 		st.mu.Lock()
 		if st.latest != nil {

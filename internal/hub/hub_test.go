@@ -31,13 +31,19 @@ func newTestHub(t *testing.T) (*Hub, *httptest.Server) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return h, httptestServer(t, h)
+}
+
+// httptestServer serves h until the test ends.
+func httptestServer(t *testing.T, h *Hub) *httptest.Server {
 	srv := httptest.NewServer(h.Handler())
 	t.Cleanup(func() {
 		srv.CloseClientConnections()
 		srv.Close()
+		h.stopRuns(10 * time.Second)
 		h.store.Close()
 	})
-	return h, srv
+	return srv
 }
 
 // startAgent runs a real agent against the test hub and returns its config path.
@@ -46,6 +52,12 @@ func startAgent(t *testing.T, hubURL, hubKey, token string) (*agent.Agent, strin
 }
 
 func startAgentWith(t *testing.T, hubURL, hubKey, token string, allowShell bool) (*agent.Agent, string) {
+	t.Helper()
+	return startConfiguredAgent(t, hubURL, hubKey, token, allowShell, nil)
+}
+
+// startConfiguredAgent lets configure change the agent before it connects.
+func startConfiguredAgent(t *testing.T, hubURL, hubKey, token string, allowShell bool, configure func(*agent.Agent)) (*agent.Agent, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "agent.json")
 	cfg, err := agent.NewConfig(path, hubURL, hubKey, token, allowShell)
@@ -58,6 +70,9 @@ func startAgentWith(t *testing.T, hubURL, hubKey, token string, allowShell bool)
 	a, err := agent.New(cfg, quiet)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if configure != nil {
+		configure(a)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -111,7 +126,7 @@ func newSession(t *testing.T, h *Hub, elevated bool) (string, *store.User) {
 	u, err := h.store.UserByName("admin")
 	if err != nil {
 		hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
-		if u, err = h.store.CreateUser("admin", string(hash)); err != nil {
+		if u, err = h.store.CreateUser("admin", string(hash), store.RoleAdmin); err != nil {
 			t.Fatal(err)
 		}
 	}

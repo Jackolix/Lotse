@@ -27,7 +27,7 @@ func (h *Hub) onlineAgent(w http.ResponseWriter, r *http.Request) (*store.System
 	return sys, ac, true
 }
 
-func (h *Hub) getProcesses(w http.ResponseWriter, r *http.Request, _ *store.Session) {
+func (h *Hub) getProcesses(w http.ResponseWriter, r *http.Request, s *store.Session) {
 	_, ac, ok := h.onlineAgent(w, r)
 	if !ok {
 		return
@@ -36,6 +36,19 @@ func (h *Hub) getProcesses(w http.ResponseWriter, r *http.Request, _ *store.Sess
 	ok, payload, err := protocol.Send(ac.conn, protocol.ReqProcesses, true, protocol.ProcessQuery{Limit: min(max(limit, 1), 100)}, 15*time.Second)
 	if err != nil || !ok {
 		writeError(w, http.StatusBadGateway, "the agent could not list its processes")
+		return
+	}
+	if !s.Can(store.RoleOperator) {
+		// Command lines can contain secrets; viewers do not get them.
+		var list protocol.ProcessList
+		if err := json.Unmarshal(payload, &list); err != nil {
+			writeError(w, http.StatusBadGateway, "the agent sent an invalid process list")
+			return
+		}
+		for i := range list.Processes {
+			list.Processes[i].Command = ""
+		}
+		writeJSON(w, http.StatusOK, list)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -66,8 +79,7 @@ func (h *Hub) postSignal(w http.ResponseWriter, r *http.Request, s *store.Sessio
 		writeError(w, http.StatusBadRequest, "signal must be terminate or kill")
 		return
 	}
-	if s.ElevatedUntil < time.Now().Unix() {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "confirm your password first", "reauth_required": true})
+	if !requireElevated(w, s) {
 		return
 	}
 	if !ac.has(protocol.FeatureShell) {
@@ -75,7 +87,7 @@ func (h *Hub) postSignal(w http.ResponseWriter, r *http.Request, s *store.Sessio
 		return
 	}
 	ok, payload, err := protocol.Send(ac.conn, protocol.ReqSignal, true, protocol.SignalMsg{PID: int32(pid), Signal: body.Signal}, 10*time.Second)
-	var reply protocol.SignalReply
+	var reply protocol.ActionReply
 	_ = json.Unmarshal(payload, &reply)
 	detail := fmt.Sprintf("%s PID %d (%s)", body.Signal, pid, truncate(body.Name, 64))
 	if err != nil || !ok {

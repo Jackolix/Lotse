@@ -1,8 +1,9 @@
 # Lotse
 
 A lightweight, self-hosted monitoring hub for Linux, macOS and Windows machines, in the spirit of
-[Beszel](https://github.com/henrygd/beszel), that can also act on them: alerts, a browser terminal, processes and
-Docker containers, and Wake-on-LAN.
+[Beszel](https://github.com/henrygd/beszel), that can also act on them: alerts, a browser terminal, file transfer,
+scripts across many machines, services, processes and Docker containers, reboots and Wake-on-LAN. Several users with
+roles, passkeys, and signed agent self-updates.
 
 - **Hub**: one Go binary in a Docker container. It includes the web UI, stores data in SQLite, and serves
   the agent installers. Idles at under 10 MB RAM.
@@ -13,9 +14,9 @@ Docker containers, and Wake-on-LAN.
 
 ```
 Browser ──HTTP, SSE, WebSocket──▶ Hub (Docker) ◀──wss/ws, SSH inside── Agent (Linux / macOS / Windows)
-  xterm.js terminal              ├─ REST API + embedded Svelte UI           PTY / ConPTY shell
-                                 ├─ SQLite: users, systems, metrics,        Wake-on-LAN relay
-                                 │  audit log
+  xterm.js terminal              ├─ REST API + embedded Svelte UI           PTY / ConPTY shell, scripts
+                                 ├─ SQLite: users, systems, metrics,        SFTP server, services, power
+                                 │  scripts, audit log                      Wake-on-LAN relay, self-update
                                  └─ /install.sh, /install.ps1, /download/<agent>
 ```
 
@@ -23,7 +24,8 @@ Browser ──HTTP, SSE, WebSocket──▶ Hub (Docker) ◀──wss/ws, SSH in
   reverse proxies.
 - **SSH inside the WebSocket.** The agent is the SSH server and the hub the SSH client. Each side pins the
   other's Ed25519 key, so the link is authenticated and encrypted even over plain `ws://`. Metrics and
-  control messages are SSH global requests; each terminal is a standard SSH session channel with a PTY.
+  control messages are SSH global requests. Each terminal is a standard SSH session channel with a PTY, file
+  transfer is the standard SFTP subsystem, and every script run gets a session channel of its own.
 - **Adaptive reporting.** Agents report every 60 s. While someone has the UI open, the hub switches them to
   every 2 s, and switches back 15 s after the last viewer leaves.
 - **Storage.** 1-minute averages are kept for 48 h, 10-minute averages for 31 days and 1-hour averages for
@@ -31,10 +33,14 @@ Browser ──HTTP, SSE, WebSocket──▶ Hub (Docker) ◀──wss/ws, SSH in
 
 ```
 cmd/hub, cmd/agent          entry points
+cmd/sign                    release tool: signs agent binaries for self-updates
 internal/protocol           hub ⇄ agent messages
-internal/agent              connection loop, config, shell (go-pty), collect/ (gopsutil)
-internal/hub                HTTP API, auth + TOTP, agent gateway, terminal bridge, wake, audit, event stream
-internal/hub/store          SQLite schema, metrics rollups, audit log
+internal/agent              connection loop, config, shell (go-pty), scripts, SFTP, services, power, self-update,
+                            collect/ (gopsutil)
+internal/hub                HTTP API, auth (roles, TOTP, passkeys), agent gateway, terminal bridge, files, scripts,
+                            wake, agent updates, audit, event stream
+internal/hub/store          SQLite schema, metrics rollups, scripts, audit log
+internal/update             signed update manifests, version comparison
 internal/wol                magic packets
 web/                        Svelte 5 + Vite + Tailwind + uPlot, embedded into the hub
 ```
@@ -49,7 +55,8 @@ make docker && docker compose up -d              # or build the image from sourc
 The compose file works as is in app managers like CasaOS, ZimaOS or Portainer. `/data` can be a named volume or a
 bind-mounted folder.
 
-Open `http://<docker-host>:8090`. On first visit you create the admin account.
+Open `http://<docker-host>:8090`. On first visit you create the admin account. More accounts can be added under
+**Users** (see [Users and roles](#users-and-roles)).
 
 | Variable        | Default        | Meaning                                                                   |
 | --------------- | -------------- | ------------------------------------------------------------------------- |
@@ -69,6 +76,10 @@ Click **Add system**. The dialog shows a one-line command for Linux, macOS and W
 1. downloads the right agent binary from the hub,
 2. writes the config (hub URL, pinned hub key, enrollment token) with root/SYSTEM-only permissions,
 3. installs and starts the service.
+
+Two options change what the hub may do on the machine: `--allow-shell` (Windows: `-AllowShell`) turns on
+[remote control](#remote-control), and `--no-updates` (`-NoUpdates`) makes the agent refuse
+[self-updates](#agent-updates).
 
 An enrollment token is valid for one hour and can enroll any number of machines. An agent deletes its token
 once the hub has accepted it.
@@ -91,7 +102,7 @@ Agents are also published on the [releases page](https://github.com/Jackolix/Lot
 ```sh
 curl -fLO https://github.com/Jackolix/Lotse/releases/latest/download/lotse-agent-linux-amd64
 sudo install lotse-agent-linux-amd64 /usr/local/bin/lotse-agent
-sudo lotse-agent install --hub http://hub.lan:8090 --key 'ssh-ed25519 …' --token … [--allow-shell]
+sudo lotse-agent install --hub http://hub.lan:8090 --key 'ssh-ed25519 …' --token … [--allow-shell] [--no-updates]
 ```
 
 A hub serves the agents built into its image. If it doesn't carry one, it redirects the download to
@@ -103,19 +114,85 @@ On systems with a read-only `/usr` (ZimaOS, Fedora CoreOS, …) the installer pu
 To remove an agent, run `sudo lotse-agent uninstall --purge` (or the same command in an elevated
 PowerShell), then delete the binary.
 
-## Remote shell
+## Remote control
 
-Open a system and click **Terminal**. You get a full terminal in the browser: bash/zsh on Linux and macOS,
-PowerShell on Windows 10 1809 or newer (via ConPTY). The shell runs as the agent's user, which is root or SYSTEM.
+With `--allow-shell` on a machine, operators can act on it. Everything runs as the agent's user, which is root or
+SYSTEM.
 
-- **Opt-in on each machine.** An agent only accepts shells if it was installed with `--allow-shell`
-  (Windows: `-AllowShell`, or tick "Allow remote shell" in the Add system dialog). The setting lives in the
-  agent's config, which only a local admin can edit. A compromised hub cannot turn it on.
-  To change it on an installed machine, re-run the install command with or without the flag.
-- **Re-authentication.** Opening a shell asks for your password again, plus your two-factor code if it's on.
-  That unlocks shells for 10 minutes, like `sudo`.
-- **Audit.** Every shell is logged under **Activity** with user, source IP, duration, bytes and exit status.
-  Keystrokes and output are not recorded. Signing out closes your open shells.
+- **Terminal.** A full terminal in the browser: bash/zsh on Linux and macOS, PowerShell on Windows 10 1809 or newer
+  (via ConPTY).
+- **Files.** Browse, upload (drag and drop works), download, rename, delete and create folders. Transfers stream
+  through the hub over SFTP; the hub holds no copy. An upload lands under a temporary name and replaces the target
+  only once complete, and a replaced file keeps its permissions and owner. On Windows, `/` lists the drives.
+- **Scripts.** See [below](#scripts).
+- **Processes and services.** Stop processes; start, stop and restart systemd units, launchd jobs or Windows
+  services.
+- **Reboot and shut down**, from the system's **Power** menu.
+
+How it is protected:
+
+- **Opt-in on each machine.** The setting lives in the agent's config, which only a local admin can edit. A
+  compromised hub cannot turn it on. To change it, re-run the install command with or without the flag. Without
+  it, the agent refuses all of the above, even when the hub asks.
+- **Re-authentication.** These actions ask for your password again (plus your two-factor code, or a passkey
+  instead). That unlocks them for 10 minutes, like `sudo`.
+- **Audit.** Shells (with user, source IP, duration, bytes and exit status), uploads, downloads, file changes,
+  script runs, service actions and reboots are logged under **Activity**. Keystrokes and file contents are not
+  recorded. Signing out closes your open shells.
+
+## Scripts
+
+**Scripts** keeps commands you run often, such as updating packages or clearing a cache: sh, Bash, PowerShell or
+cmd, with a time limit. Run one, or a one-off command, on any number of systems at once.
+
+- Output (stdout and stderr) streams live for every system. Afterwards you see each exit status, and the last
+  128 KiB of output per system are kept for 90 days.
+- A script that reaches its time limit is stopped together with everything it started (exit status 124). **Stop**
+  ends a run early.
+- Systems that are offline, lack `--allow-shell` or don't have the shell (sh on Windows, cmd elsewhere) are
+  skipped and marked as such.
+- Up to 16 systems run at the same time; the rest wait.
+
+## Users and roles
+
+Administrators add accounts under **Users** and give each a role:
+
+| Role | Can |
+| ---- | --- |
+| Viewer | See systems, charts, containers, processes (without command lines), services and alerts; their own activity |
+| Operator | Also use terminals, files and scripts, stop processes, control services, reboot, wake and rename systems |
+| Administrator | Also manage users, add and delete systems, edit alert rules and channels, update agents; see all activity |
+
+The hub checks every request against the role; the UI only hides what a role can't use. Changing someone's password
+signs them out everywhere. Taking away a user's operator rights closes their open terminals. The last administrator
+cannot be removed or demoted. An administrator can also turn off two-factor login for a user who lost their
+authenticator.
+
+## Passkeys
+
+Under **Settings → Passkeys** you can add passkeys (iCloud Keychain, Google Password Manager, 1Password, Bitwarden,
+Windows Hello, security keys, …). A passkey signs you in without password and code, and confirms terminals and other
+sensitive actions.
+
+- The hub requests user verification (fingerprint, face or PIN) every time, so a passkey replaces both password and
+  two-factor code.
+- Browsers only offer passkeys on `https://` pages (or `http://localhost`). Put the hub behind a reverse proxy with a
+  certificate and open it by its hostname.
+- A passkey is bound to the hostname it was created on. If you open the hub under another name, add one there too.
+
+## Agent updates
+
+Release images carry agents signed with the project's release key. When an agent is older than the hub's version,
+administrators see **Update agent** on the system (or **Update all** on the overview). The hub sends the binary over
+the agent's SSH link. The agent only installs it if:
+
+- the manifest's Ed25519 signature matches the release key built into the agent,
+- it is built for the agent's OS and architecture, with a matching SHA-256,
+- its version is newer than the running one (no downgrades), and the new binary starts.
+
+The agent then replaces itself and restarts. On Linux and macOS it re-executes in place; on Windows the service
+manager restarts it. A compromised hub can neither push its own code this way nor downgrade agents. Agents installed
+with `--no-updates` refuse all updates, and agents older than 0.4 need the install command once more.
 
 ## Alerts
 
@@ -133,8 +210,8 @@ come with a new hub: offline for 2 min, CPU or memory above 90 % for 5 min, and 
 ## Processes and containers
 
 - **Processes:** the busiest processes are listed on demand, refreshed every 5 s while shown. Command lines can
-  contain secrets, so agents only include them when installed with `--allow-shell`. Terminating or killing a process
-  needs the same opt-in plus a password confirmation, and it is audited.
+  contain secrets, so agents only include them when installed with `--allow-shell`, and viewers never see them.
+  Terminating or killing a process needs the same opt-in plus a password confirmation, and it is audited.
 - **Containers:** if Docker or Podman runs on the machine, each container shows its state, CPU, memory and network.
   No setup is needed; the agent uses the local API socket. Windows' Docker Desktop pipe isn't supported yet.
 
@@ -152,19 +229,25 @@ Ethernet.
 
 ## Security model
 
-- The web UI uses bcrypt passwords, optional TOTP two-factor login (codes can't be reused), HttpOnly
-  `SameSite=Strict` session cookies, an Origin check on every write and WebSocket, a strict CSP, and a 5-minute
-  lockout after 5 failed logins or re-authentications per IP.
-- Opening a shell needs a re-authentication within the last 10 minutes. Changing your password signs out all
-  other sessions.
-- The activity log records sign-ins (including failed ones), password confirmations, shells, Wake-on-LAN and
-  changes to systems. It is kept for a year.
+- The web UI uses bcrypt passwords, optional TOTP two-factor login (codes can't be reused), passkeys (WebAuthn with
+  user verification, challenges single-use and bound to the session), HttpOnly `SameSite=Strict` session cookies,
+  an Origin check on every write and WebSocket, a strict CSP, and a 5-minute lockout after 5 failed logins or
+  re-authentications per IP.
+- Every API route requires a role (viewer, operator, administrator). Terminals, files, scripts, process and service
+  control, reboots and user changes also need a re-authentication within the last 10 minutes. Changing your password
+  signs out all other sessions.
+- The activity log records sign-ins (including failed ones), password confirmations, shells, file transfers and
+  changes, script runs, service actions, reboots, Wake-on-LAN, agent updates and changes to systems and users. It is
+  kept for a year.
 - Agents only accept the hub key pinned at install time. The hub only accepts agents whose key it has
   enrolled, or that present a valid, unexpired enrollment token.
 - Session and enrollment tokens are stored as SHA-256 hashes.
 - Deleting a system in the UI drops its connection. The agent cannot rejoin without a new token.
-- Agents refuse shells and process signals unless installed with `--allow-shell`, and only then include command
-  lines in process lists. They send Wake-on-LAN packets only to the broadcast addresses of their own networks.
+- Agents refuse shells, files, scripts, process signals, service actions and reboots unless installed with
+  `--allow-shell`, and only then include command lines in process lists. They send Wake-on-LAN packets only to the
+  broadcast addresses of their own networks.
+- Agents only install updates signed with the release key compiled into them, for their platform, and newer than
+  themselves.
 - The install command fetches the installer over whatever scheme the hub URL uses. On an untrusted network,
   put the hub behind HTTPS (Caddy, Traefik) and set `HUB_URL=https://…`.
 
@@ -174,8 +257,15 @@ GitHub Actions (`.github/workflows/build.yml`) tests every push and pull request
 agent platforms, `go test -race` and svelte-check.
 
 - Every push to `main` publishes the Docker image `ghcr.io/jackolix/lotse:main` for amd64 and arm64.
-- Pushing a tag like `v0.3.0` publishes `:0.3.0`, `:0.3` and `:latest`, and creates a GitHub release. The release
-  contains the agents for every platform, hub binaries for Linux, and checksums.
+- Pushing a tag like `v0.4.0` publishes `:0.4.0`, `:0.4` and `:latest`, and creates a GitHub release. The release
+  contains the agents for every platform with their signed manifests (`*.sig`), hub binaries for Linux, and
+  checksums.
+
+**Signing key.** Release builds sign the agents with the Ed25519 key in the `LOTSE_SIGNING_KEY` repository secret;
+its public half is `update.TrustedKeys` in `internal/update/update.go`. Without the secret, builds work but their
+agents can't be updated from the hub. To use your own key (e.g. for your own builds), run `go run ./cmd/sign keygen`,
+store the private key as the secret, and replace the public key in the source. Keep a backup of the private key:
+agents only accept updates signed with the key they were built with.
 
 ## Development
 
@@ -201,5 +291,5 @@ lotse-agent run --config ./dev/agent.json
 2. ~~Remote shell (xterm.js ⇄ hub ⇄ SSH channel ⇄ PTY/ConPTY), agent-side opt-in, re-authentication, TOTP,
    audit log, Wake-on-LAN via relay agents~~
 3. ~~Alerts via ntfy, Discord, Slack, Telegram, email and webhooks; Docker/Podman containers; processes~~
-4. Saved scripts across hosts, file transfer (SFTP), signed agent self-update, reboot and service actions,
-   passkeys, more users with roles
+4. ~~Saved scripts across hosts, file transfer (SFTP), signed agent self-update, reboot and service actions,
+   passkeys, more users with roles~~

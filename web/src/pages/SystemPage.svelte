@@ -5,12 +5,24 @@
   import ChartCard from '../lib/components/ChartCard.svelte'
   import ContainerTable from '../lib/components/ContainerTable.svelte'
   import ProcessTable from '../lib/components/ProcessTable.svelte'
+  import ServiceTable from '../lib/components/ServiceTable.svelte'
   import Icon from '../lib/components/Icon.svelte'
   import Meter from '../lib/components/Meter.svelte'
   import StatusDot from '../lib/components/StatusDot.svelte'
   import { ago, archLabel, bytes, dateTime, duration, osLabel, pct, rate, ratio } from '../lib/format'
+  import { can } from '../lib/auth.svelte'
+  import { openMenu } from '../lib/menu.svelte'
   import { link, navigate } from '../lib/router.svelte'
-  import { canShell as shellAllowed, deleteSystem, ipv4Of, macsOf, wakeSystem } from '../lib/systemActions'
+  import {
+    canShell as shellAllowed,
+    deleteSystem,
+    ipv4Of,
+    macsOf,
+    needsAllowShell,
+    powerSystem,
+    updateAgent,
+    wakeSystem,
+  } from '../lib/systemActions'
   import { systems } from '../lib/systems.svelte'
 
   let { id }: { id: number } = $props()
@@ -36,7 +48,9 @@
   let newName = $state('')
   let actionError = $state('')
   let waking = $state(false)
+  let updating = $state(false)
   let showProcesses = $state(false)
+  let showServices = $state(false)
 
   const sys = $derived(systems.get(id))
   const m = $derived(sys?.metrics ?? null)
@@ -111,6 +125,7 @@
   const diskMax = $derived(Math.max(m?.disk_total ?? 0, maxOf(series?.values.disk_total)))
   const isWindows = $derived(sys?.info.os === 'windows')
   const canShell = $derived(sys ? shellAllowed(sys) : false)
+  const operator = $derived(can('operator'))
   const macs = $derived(sys ? macsOf(sys) : [])
   const ipv4 = $derived(sys ? ipv4Of(sys) : undefined)
 
@@ -141,6 +156,22 @@
 
   async function remove() {
     if (sys && (await deleteSystem(sys))) navigate('/')
+  }
+
+  async function update() {
+    if (!sys) return
+    updating = true
+    await updateAgent(sys)
+    updating = false
+  }
+
+  function powerMenu(e: MouseEvent) {
+    if (!sys) return
+    const s = sys
+    openMenu(e, [
+      { label: 'Reboot…', icon: 'refresh', action: () => powerSystem(s, 'reboot') },
+      { label: 'Shut down…', icon: 'power', danger: true, action: () => powerSystem(s, 'shutdown') },
+    ])
   }
 </script>
 
@@ -176,23 +207,36 @@
       </div>
       {#if !renaming}
         <div class="flex flex-wrap gap-2">
-          {#if sys.online}
+          {#if sys.online && operator}
             {#if canShell}
               <a class="btn btn-primary" href="/systems/{id}/terminal" onclick={link}><Icon name="terminal" size={14} /> Terminal</a>
+              <a class="btn" href="/systems/{id}/files" onclick={link}><Icon name="folder" size={14} /> Files</a>
+              <a class="btn" href="/scripts?system={id}" onclick={link}><Icon name="code" size={14} /> Run script</a>
+              <button class="btn" onclick={powerMenu} aria-haspopup="menu">
+                <Icon name="power" size={14} /> Power <Icon name="chevron-down" size={12} />
+              </button>
             {:else}
-              <button
-                class="btn"
-                disabled
-                title="Remote shell is disabled on this machine. Reinstall the agent with --allow-shell to enable it."
-              >
+              <button class="btn" disabled title="Remote control is off on this machine. {needsAllowShell}.">
                 <Icon name="terminal" size={14} /> Terminal
               </button>
+              <button class="btn" disabled title="Remote control is off on this machine. {needsAllowShell}.">
+                <Icon name="folder" size={14} /> Files
+              </button>
             {/if}
-          {:else if macs.length}
+          {:else if macs.length && operator}
             <button class="btn btn-primary" onclick={wake} disabled={waking}><Icon name="power" size={14} /> Wake</button>
           {/if}
-          <button class="btn" onclick={startRename}><Icon name="pencil" size={14} /> Rename</button>
-          <button class="btn btn-danger" onclick={remove}><Icon name="trash" size={14} /> Delete</button>
+          {#if sys.update && can('admin')}
+            <button class="btn" onclick={update} disabled={updating} title="Installs the signed agent {sys.update} and restarts it">
+              <Icon name="package" size={14} /> {updating ? 'Updating…' : `Update agent to ${sys.update}`}
+            </button>
+          {/if}
+          {#if operator}
+            <button class="btn" onclick={startRename}><Icon name="pencil" size={14} /> Rename</button>
+          {/if}
+          {#if can('admin')}
+            <button class="btn btn-danger" onclick={remove}><Icon name="trash" size={14} /> Delete</button>
+          {/if}
         </div>
       {/if}
     </div>
@@ -207,10 +251,10 @@
         <a class="ml-auto text-xs text-ink-2 hover:text-ink" href="/alerts" onclick={link}>Alerts</a>
       </p>
     {/each}
-    {#if sys.online && !canShell}
+    {#if sys.online && !canShell && operator}
       <p class="mt-3 text-xs text-muted">
-        Remote shell is off for this machine. To allow it, re-run the install command with
-        <code class="font-mono">--allow-shell</code> (Windows: <code class="font-mono">-AllowShell</code>).
+        Remote control (terminal, files, scripts, services, reboot) is off for this machine. To allow it, re-run the
+        install command with <code class="font-mono">--allow-shell</code> (Windows: <code class="font-mono">-AllowShell</code>).
       </p>
     {/if}
 
@@ -372,8 +416,20 @@
 
   {#if sys.online}
     <section class="card mt-4 overflow-hidden pb-2">
+      {#if showServices}
+        <ServiceTable systemId={id} canControl={canShell && operator} />
+      {:else}
+        <div class="flex flex-wrap items-center gap-3 px-4 py-3">
+          <h2 class="text-sm font-medium">Services</h2>
+          <span class="text-xs text-muted">systemd units, launchd jobs or Windows services.</span>
+          <button class="btn ml-auto h-8" onclick={() => (showServices = true)}><Icon name="settings" size={14} /> Show services</button>
+        </div>
+      {/if}
+    </section>
+
+    <section class="card mt-4 overflow-hidden pb-2">
       {#if showProcesses}
-        <ProcessTable systemId={id} canControl={canShell} />
+        <ProcessTable systemId={id} canControl={canShell && operator} />
       {:else}
         <div class="flex flex-wrap items-center gap-3 px-4 py-3">
           <h2 class="text-sm font-medium">Processes</h2>

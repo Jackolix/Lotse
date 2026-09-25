@@ -4,6 +4,7 @@
   import { dateTime } from '../lib/format'
   import { openMenu, type MenuEntry } from '../lib/menu.svelte'
   import { link, navigate } from '../lib/router.svelte'
+  import { can } from '../lib/auth.svelte'
   import { copy } from '../lib/systemActions'
   import { systems } from '../lib/systems.svelte'
 
@@ -39,6 +40,31 @@
     notifier_deleted: 'Deleted a notification channel',
     process_signaled: 'Stopped a process',
     process_signal_failed: 'Stopping a process failed',
+    passkey_added: 'Added a passkey',
+    passkey_add_failed: 'Adding a passkey failed',
+    passkey_removed: 'Removed a passkey',
+    user_created: 'Added a user',
+    user_changed: 'Changed a user',
+    user_deleted: 'Deleted a user',
+    file_downloaded: 'Downloaded a file',
+    file_download_failed: 'File download failed',
+    file_uploaded: 'Uploaded a file',
+    file_upload_failed: 'File upload failed',
+    file_renamed: 'Renamed a file',
+    file_deleted: 'Deleted a file',
+    folder_created: 'Created a folder',
+    script_saved: 'Saved a script',
+    script_deleted: 'Deleted a script',
+    script_run: 'Ran a script',
+    script_canceled: 'Stopped a script run',
+    reboot: 'Rebooted',
+    reboot_failed: 'Reboot failed',
+    shutdown: 'Shut down',
+    shutdown_failed: 'Shutdown failed',
+    service_controlled: 'Controlled a service',
+    service_control_failed: 'Controlling a service failed',
+    agent_updated: 'Updated the agent',
+    agent_update_failed: 'Agent update failed',
   }
   const failed = (action: string) => action.endsWith('_failed') || action === 'shell_denied'
 
@@ -81,7 +107,11 @@
 </script>
 
 <h1 class="text-xl font-semibold">Activity</h1>
-<p class="text-sm text-ink-2">Sign-ins, shells, Wake-on-LAN and changes to systems. Kept for a year.</p>
+<p class="text-sm text-ink-2">
+  {can('admin')
+    ? 'Sign-ins, shells, files, scripts, power actions and changes to systems and users. Kept for a year.'
+    : 'What you did: sign-ins, shells, files, scripts and changes. Kept for a year.'}
+</p>
 
 <section class="card mt-5 overflow-hidden">
   <div class="overflow-x-auto">

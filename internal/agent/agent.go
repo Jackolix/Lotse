@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -39,7 +40,15 @@ type Agent struct {
 	collector *collect.Collector
 	info      protocol.SystemInfo
 	log       *slog.Logger
-	shells    atomic.Int32 // open remote shells
+	sessions  atomic.Int32 // open session channels: shells, file transfers, scripts
+	updating  atomic.Bool
+
+	// Executable is the installed agent binary that updates replace; empty means
+	// os.Executable().
+	Executable string
+	// Restart starts the new binary after an update. cmd/agent sets it; without it
+	// the old version keeps running until the service restarts.
+	Restart func(exe string)
 }
 
 func New(cfg *Config, log *slog.Logger) (*Agent, error) {
@@ -69,6 +78,7 @@ func (a *Agent) Fingerprint() string {
 // Run keeps a connection to the hub open until ctx is cancelled.
 func (a *Agent) Run(ctx context.Context) {
 	a.log.Info("agent starting", "version", version.Version, "hub", a.cfg.HubURL, "fingerprint", a.Fingerprint())
+	a.cleanupUpdate()
 	backoff := minBackoff
 	var lastErr string
 	var lastLogged time.Time
@@ -216,8 +226,13 @@ func (a *Agent) features() []string {
 	if a.cfg.AllowShell {
 		f = append(f, protocol.FeatureShell)
 	}
+	if !a.cfg.DisableUpdates {
+		f = append(f, protocol.FeatureUpdate)
+	}
 	return f
 }
+
+const remoteControlOff = "is disabled on this machine (install the agent with --allow-shell)"
 
 func (a *Agent) handleRequests(reqs <-chan *ssh.Request, intervals chan time.Duration) {
 	for req := range reqs {
@@ -241,15 +256,58 @@ func (a *Agent) handleRequests(reqs <-chan *ssh.Request, intervals chan time.Dur
 				req.Reply(false, nil)
 				continue
 			}
-			var reply protocol.SignalReply
+			var reply protocol.ActionReply
 			if !a.cfg.AllowShell {
-				reply.Error = "stopping processes is disabled on this machine (install the agent with --allow-shell)"
+				reply.Error = "stopping processes " + remoteControlOff
 			} else if err := collect.Signal(msg.PID, msg.Signal); err != nil {
 				reply.Error = err.Error()
 			} else {
 				a.log.Info("process signaled by hub", "pid", msg.PID, "signal", msg.Signal)
 			}
 			protocol.Reply(req, reply.Error == "", reply)
+		case protocol.ReqPower:
+			var msg protocol.PowerMsg
+			if err := json.Unmarshal(req.Payload, &msg); err != nil {
+				req.Reply(false, nil)
+				continue
+			}
+			var reply protocol.ActionReply
+			var cmd *exec.Cmd
+			if !a.cfg.AllowShell {
+				reply.Error = "rebooting and shutting down " + remoteControlOff
+			} else if c, err := powerCommand(msg.Action); err != nil {
+				reply.Error = err.Error()
+			} else {
+				cmd = c
+			}
+			protocol.Reply(req, reply.Error == "", reply)
+			if cmd != nil {
+				a.log.Warn("power action requested by hub", "action", msg.Action, "command", cmd.String())
+				time.AfterFunc(time.Second, func() { // let the reply reach the hub first
+					if out, err := cmd.CombinedOutput(); err != nil {
+						a.log.Error("power action failed", "action", msg.Action, "err", err, "output", strings.TrimSpace(string(out)))
+					}
+				})
+			}
+		case protocol.ReqServices:
+			go protocol.Reply(req, true, listServices())
+		case protocol.ReqService:
+			var msg protocol.ServiceMsg
+			if err := json.Unmarshal(req.Payload, &msg); err != nil {
+				req.Reply(false, nil)
+				continue
+			}
+			go func() {
+				var reply protocol.ActionReply
+				if !a.cfg.AllowShell {
+					reply.Error = "controlling services " + remoteControlOff
+				} else if err := controlService(msg.Name, msg.Action); err != nil {
+					reply.Error = err.Error()
+				} else {
+					a.log.Info("service controlled by hub", "service", msg.Name, "action", msg.Action)
+				}
+				protocol.Reply(req, reply.Error == "", reply)
+			}()
 		case protocol.ReqWake:
 			var msg protocol.WakeMsg
 			if err := json.Unmarshal(req.Payload, &msg); err != nil || !wol.IsLocalBroadcast(msg.Broadcast) {

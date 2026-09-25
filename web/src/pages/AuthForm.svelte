@@ -2,6 +2,7 @@
   import { api, ApiError } from '../lib/api'
   import { signedIn } from '../lib/auth.svelte'
   import Icon from '../lib/components/Icon.svelte'
+  import { getAssertion, passkeysSupported } from '../lib/passkey'
 
   // Login, or creation of the first account when the hub has none yet.
   let { setup = false }: { setup?: boolean } = $props()
@@ -13,6 +14,18 @@
   let needCode = $state(false) // two-factor login: second step
   let error = $state('')
   let busy = $state(false)
+
+  async function withPasskey() {
+    error = ''
+    busy = true
+    try {
+      signedIn(await api.loginWithPasskey(await getAssertion(await api.loginPasskeyOptions())))
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Cannot reach the hub.'
+    } finally {
+      busy = false
+    }
+  }
 
   async function submit(e: SubmitEvent) {
     e.preventDefault()
@@ -98,6 +111,11 @@
     {#if needCode}
       <button type="button" class="mt-2 w-full text-center text-sm text-ink-2 hover:text-ink" onclick={() => ((needCode = false), (error = ''))}>
         Back
+      </button>
+    {:else if !setup && passkeysSupported()}
+      <div class="my-4 flex items-center gap-3 text-xs text-muted"><span class="h-px flex-1 bg-line"></span>or<span class="h-px flex-1 bg-line"></span></div>
+      <button type="button" class="btn w-full justify-center" onclick={withPasskey} disabled={busy}>
+        <Icon name="key" size={14} /> Sign in with a passkey
       </button>
     {/if}
   </form>

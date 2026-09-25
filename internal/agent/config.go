@@ -22,6 +22,9 @@ type Config struct {
 	// default; only someone with local admin rights can turn it on.
 	AllowShell bool `json:"allow_shell"`
 
+	// DisableUpdates makes the agent refuse self-updates, even signed ones.
+	DisableUpdates bool `json:"disable_updates,omitempty"`
+
 	path string
 }
 

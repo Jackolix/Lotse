@@ -1,5 +1,14 @@
-import { api, setUnauthorizedHandler, type User } from './api'
+import { api, setUnauthorizedHandler, type Role, type User } from './api'
 import { systems } from './systems.svelte'
+
+const rank: Record<Role, number> = { viewer: 1, operator: 2, admin: 3 }
+
+/** Whether the signed-in user's role includes role. The hub enforces the same rules. */
+export function can(role: Role): boolean {
+  return !!auth.user && rank[auth.user.role] >= rank[role]
+}
+
+export const roleLabel: Record<Role, string> = { viewer: 'Viewer', operator: 'Operator', admin: 'Administrator' }
 
 export const auth = $state({
   checked: false,

@@ -20,6 +20,7 @@ import (
 
 	"github.com/Jackolix/Lotse/internal/hub/store"
 	"github.com/Jackolix/Lotse/internal/sshkey"
+	"github.com/Jackolix/Lotse/internal/update"
 	"github.com/Jackolix/Lotse/internal/version"
 )
 
@@ -65,15 +66,23 @@ type Hub struct {
 	setupMu sync.Mutex
 	agentWG sync.WaitGroup
 
-	alerts   *alertEngine
-	totpMu   sync.Mutex
-	totpUsed map[int64]int64 // last accepted TOTP time step per user, against replays
+	alerts     *alertEngine
+	totpMu     sync.Mutex
+	totpUsed   map[int64]int64             // last accepted TOTP time step per user, against replays
+	challenges challenges                  // pending passkey ceremonies
+	updates    map[string]*update.Manifest // signed agent binaries by file name; read-only after New
+
+	// ctx ends when the hub shuts down; script runs, which outlive their request, use it.
+	ctx   context.Context
+	stop  context.CancelFunc
+	runWG sync.WaitGroup
 
 	mu        sync.Mutex
 	agents    map[int64]*agentConn // connected agents by system ID
 	states    map[int64]*sysState
 	shells    map[*shellSession]struct{}
-	live      bool // agents currently report at liveInterval
+	runs      map[int64]*activeRun // script runs in progress
+	live      bool                 // agents currently report at liveInterval
 	idleTimer *time.Timer
 }
 
@@ -92,14 +101,35 @@ func New(cfg Config, log *slog.Logger) (*Hub, error) {
 		agents:   map[int64]*agentConn{},
 		states:   map[int64]*sysState{},
 		shells:   map[*shellSession]struct{}{},
+		runs:     map[int64]*activeRun{},
 		alerts:   &alertEngine{states: map[alertKey]*alertState{}, offline: map[int64]time.Time{}, started: time.Now()},
 	}
+	h.ctx, h.stop = context.WithCancel(context.Background())
 	h.broker = newBroker(h.viewersChanged)
 	if err := h.loadAlerts(); err != nil {
 		st.Close()
 		return nil, fmt.Errorf("loading alerts: %w", err)
 	}
+	if err := h.finishInterruptedRuns(); err != nil {
+		st.Close()
+		return nil, fmt.Errorf("closing interrupted script runs: %w", err)
+	}
+	h.loadUpdates()
 	return h, nil
+}
+
+// stopRuns cancels script runs and waits for their results to be stored.
+func (h *Hub) stopRuns(timeout time.Duration) {
+	h.stop()
+	done := make(chan struct{})
+	go func() {
+		h.runWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+	}
 }
 
 func openData(cfg Config) (*store.Store, ssh.Signer, error) {
@@ -159,6 +189,7 @@ func (h *Hub) Run(ctx context.Context) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
+	h.stopRuns(5 * time.Second)
 	h.waitAgents(5 * time.Second)
 	h.flush(true)
 	return h.store.Close()
@@ -225,6 +256,9 @@ func (h *Hub) prune() {
 	}
 	if err := h.store.PruneAlerts(time.Now()); err != nil {
 		h.log.Error("pruning alert history failed", "err", err)
+	}
+	if err := h.store.PruneRuns(time.Now()); err != nil {
+		h.log.Error("pruning script runs failed", "err", err)
 	}
 }
 

@@ -55,7 +55,7 @@ func Reply(req *ssh.Request, ok bool, v any) error {
 	return req.Reply(ok, payload)
 }
 
-// RejectChannels refuses every incoming channel. Phase 1 has no channel-based features.
+// RejectChannels refuses every incoming channel. Agents never open channels to the hub.
 func RejectChannels(chans <-chan ssh.NewChannel) {
 	for ch := range chans {
 		ch.Reject(ssh.Prohibited, "not supported")

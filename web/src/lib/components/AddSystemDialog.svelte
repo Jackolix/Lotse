@@ -115,10 +115,11 @@
       <label class="mt-4 flex items-start gap-2.5 text-sm">
         <input type="checkbox" class="mt-0.5 size-4 accent-[var(--accent)]" bind:checked={allowShell} />
         <span>
-          <span class="font-medium">Allow remote shell</span>
+          <span class="font-medium">Allow remote control</span>
           <span class="block text-xs text-ink-2">
-            Lets hub users open a root (Windows: SYSTEM) terminal on this machine after confirming their password. The
-            setting lives on the machine; the hub cannot turn it on later.
+            Lets operators open a terminal, transfer files and run scripts as root (Windows: SYSTEM), and stop
+            processes, restart services and reboot, after confirming their password. The setting lives on the machine;
+            the hub cannot turn it on later.
           </span>
         </span>
       </label>

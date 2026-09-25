@@ -22,13 +22,21 @@ export const menu = $state({
 
 let returnFocus: HTMLElement | null = null
 
-/** Use as an oncontextmenu handler. Also works for the keyboard (Menu key, Shift+F10). */
+/**
+ * Use as an oncontextmenu handler, or as onclick of a button that opens a menu. Also
+ * works for the keyboard (Menu key, Shift+F10).
+ */
 export function openMenu(e: MouseEvent, items: MenuEntry[]) {
   e.preventDefault()
   e.stopPropagation()
   let { clientX: x, clientY: y } = e
   const target = e.currentTarget
-  if (x === 0 && y === 0 && target instanceof HTMLElement) {
+  if (e.type === 'click' && target instanceof HTMLElement) {
+    // A menu button: drop down below it.
+    const r = target.getBoundingClientRect()
+    x = r.left
+    y = r.bottom + 4
+  } else if (x === 0 && y === 0 && target instanceof HTMLElement) {
     // Opened from the keyboard: anchor to the element instead of the pointer.
     const r = target.getBoundingClientRect()
     x = r.left + 16

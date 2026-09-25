@@ -1,10 +1,11 @@
 # Installs the Lotse agent as a Windows service. Run in an elevated PowerShell:
-# & ([scriptblock]::Create((irm HUB/install.ps1))) -Hub HUB -Key 'ssh-ed25519 ...' -Token TOKEN [-AllowShell]
+# & ([scriptblock]::Create((irm HUB/install.ps1))) -Hub HUB -Key 'ssh-ed25519 ...' -Token TOKEN [-AllowShell] [-NoUpdates]
 param(
     [Parameter(Mandatory = $true)][string]$Hub,
     [Parameter(Mandatory = $true)][string]$Key,
     [string]$Token = "",
-    [switch]$AllowShell
+    [switch]$AllowShell,
+    [switch]$NoUpdates
 )
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue" # the progress bar makes downloads very slow in PowerShell 5
@@ -30,5 +31,6 @@ Invoke-WebRequest -UseBasicParsing -Uri "$Hub/download/$name-windows-$arch.exe" 
 Move-Item -Force $tmp $exe
 
 $shell = if ($AllowShell) { "true" } else { "false" }
-& $exe install "--hub=$Hub" "--key=$Key" "--token=$Token" "--allow-shell=$shell"
+$updates = if ($NoUpdates) { "true" } else { "false" }
+& $exe install "--hub=$Hub" "--key=$Key" "--token=$Token" "--allow-shell=$shell" "--no-updates=$updates"
 if ($LASTEXITCODE -ne 0) { throw "agent installation failed" }

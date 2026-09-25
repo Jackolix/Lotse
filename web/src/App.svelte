@@ -1,20 +1,26 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { auth, checkAuth, signOut } from './lib/auth.svelte'
+  import { auth, can, checkAuth, signOut } from './lib/auth.svelte'
   import ContextMenu from './lib/components/ContextMenu.svelte'
   import Dialogs from './lib/components/Dialogs.svelte'
   import Icon from './lib/components/Icon.svelte'
+  import ReauthDialog from './lib/components/ReauthDialog.svelte'
   import Toaster from './lib/components/Toaster.svelte'
+  import { reauth, settleReauth } from './lib/reauth.svelte'
   import { link, route } from './lib/router.svelte'
   import { systems } from './lib/systems.svelte'
   import { setTheme, theme, type ThemeMode } from './lib/theme.svelte'
   import ActivityPage from './pages/ActivityPage.svelte'
   import AlertsPage from './pages/AlertsPage.svelte'
   import AuthForm from './pages/AuthForm.svelte'
+  import FilesPage from './pages/FilesPage.svelte'
   import Overview from './pages/Overview.svelte'
+  import RunPage from './pages/RunPage.svelte'
+  import ScriptsPage from './pages/ScriptsPage.svelte'
   import SettingsPage from './pages/SettingsPage.svelte'
   import SystemPage from './pages/SystemPage.svelte'
   import TerminalPage from './pages/TerminalPage.svelte'
+  import UsersPage from './pages/UsersPage.svelte'
 
   onMount(checkAuth)
 
@@ -22,16 +28,27 @@
     if (auth.user) systems.start()
   })
 
-  const systemMatch = $derived(route.path.match(/^\/systems\/(\d+)(\/terminal)?$/))
+  const systemMatch = $derived(route.path.match(/^\/systems\/(\d+)(?:\/(terminal|files))?$/))
   const systemId = $derived(Number(systemMatch?.[1] ?? 0))
-  const terminal = $derived(!!systemMatch?.[2])
+  const subpage = $derived(systemMatch?.[2] ?? '')
+  const runId = $derived(Number(route.path.match(/^\/runs\/(\d+)$/)?.[1] ?? 0))
+  const wide = $derived(subpage === 'terminal')
 
-  const nav = [
-    { href: '/', label: 'Systems', active: (p: string) => p === '/' || p.startsWith('/systems/') },
-    { href: '/alerts', label: 'Alerts', active: (p: string) => p === '/alerts' },
-    { href: '/activity', label: 'Activity', active: (p: string) => p === '/activity' },
-    { href: '/settings', label: 'Settings', active: (p: string) => p === '/settings' },
-  ]
+  const nav = $derived(
+    [
+      { href: '/', label: 'Systems', show: true, active: (p: string) => p === '/' || p.startsWith('/systems/') },
+      {
+        href: '/scripts',
+        label: 'Scripts',
+        show: can('operator'),
+        active: (p: string) => p === '/scripts' || p.startsWith('/runs/'),
+      },
+      { href: '/alerts', label: 'Alerts', show: true, active: (p: string) => p === '/alerts' },
+      { href: '/activity', label: 'Activity', show: true, active: (p: string) => p === '/activity' },
+      { href: '/users', label: 'Users', show: can('admin'), active: (p: string) => p === '/users' },
+      { href: '/settings', label: 'Settings', show: true, active: (p: string) => p === '/settings' },
+    ].filter((item) => item.show),
+  )
 
   const nextTheme: Record<ThemeMode, ThemeMode> = { system: 'light', light: 'dark', dark: 'system' }
   const themeLabel: Record<ThemeMode, string> = { system: 'Theme: system', light: 'Theme: light', dark: 'Theme: dark' }
@@ -48,7 +65,7 @@
         <span class="grid size-7 place-items-center rounded-lg bg-accent text-white"><Icon name="activity" /></span>
         <span class="hidden sm:inline">Lotse</span>
       </a>
-      <nav class="ml-1 flex items-center gap-0.5 text-sm">
+      <nav class="ml-1 flex min-w-0 items-center gap-0.5 overflow-x-auto text-sm [scrollbar-width:none]">
         {#each nav as item (item.href)}
           <a
             href={item.href}
@@ -82,7 +99,7 @@
         >
           <Icon name={theme.mode === 'dark' ? 'moon' : theme.mode === 'light' ? 'sun' : 'monitor'} />
         </button>
-        <span class="hidden px-1 text-sm text-ink-2 md:inline">{auth.user.username}</span>
+        <span class="hidden px-1 text-sm text-ink-2 md:inline" title="Role: {auth.user.role}">{auth.user.username}</span>
         <button class="btn px-2 md:px-3" onclick={signOut} aria-label="Sign out">
           <Icon name="logout" /><span class="hidden md:inline">Sign out</span>
         </button>
@@ -90,7 +107,7 @@
     </div>
   </header>
 
-  <main class="mx-auto px-4 py-6 {terminal ? 'max-w-screen-2xl' : 'max-w-6xl'}">
+  <main class="mx-auto px-4 py-6 {wide ? 'max-w-screen-2xl' : 'max-w-6xl'}">
     {#if route.path === '/'}
       <Overview />
     {:else if route.path === '/alerts'}
@@ -99,9 +116,21 @@
       <ActivityPage />
     {:else if route.path === '/settings'}
       <SettingsPage />
-    {:else if systemId && terminal}
+    {:else if route.path === '/scripts' && can('operator')}
+      <ScriptsPage />
+    {:else if runId && can('operator')}
+      {#key runId}
+        <RunPage id={runId} />
+      {/key}
+    {:else if route.path === '/users' && can('admin')}
+      <UsersPage />
+    {:else if systemId && subpage === 'terminal'}
       {#key systemId}
         <TerminalPage id={systemId} />
+      {/key}
+    {:else if systemId && subpage === 'files'}
+      {#key systemId}
+        <FilesPage id={systemId} />
       {/key}
     {:else if systemId}
       {#key systemId}
@@ -115,4 +144,10 @@
 
 <ContextMenu />
 <Dialogs />
+<ReauthDialog
+  bind:open={reauth.open}
+  reason={reauth.reason}
+  onconfirmed={() => settleReauth(true)}
+  oncancel={() => settleReauth(false)}
+/>
 <Toaster />

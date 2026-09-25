@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"image/png"
 	"net/http"
 	"strings"
@@ -71,10 +72,35 @@ func (h *Hub) requireUser(next sessionHandler) http.HandlerFunc {
 	}
 }
 
+// requireRole only lets users through whose role includes role.
+func (h *Hub) requireRole(role string, next sessionHandler) http.HandlerFunc {
+	return h.requireUser(func(w http.ResponseWriter, r *http.Request, s *store.Session) {
+		if !s.Can(role) {
+			writeError(w, http.StatusForbidden, "your role ("+s.Role+") does not allow this")
+			return
+		}
+		next(w, r, s)
+	})
+}
+
+// requireElevated checks for a recent re-authentication, which actions such as
+// opening files or running scripts need. The UI then asks for the password again.
+func requireElevated(w http.ResponseWriter, s *store.Session) bool {
+	if s.ElevatedUntil >= time.Now().Unix() {
+		return true
+	}
+	writeJSON(w, http.StatusForbidden, map[string]any{"error": "confirm your password first", "reauth_required": true})
+	return false
+}
+
 type credentials struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Code     string `json:"code"` // TOTP code, when two-factor login is on
+
+	// Passkey replaces username, password and code when signing in or confirming
+	// with a passkey.
+	Passkey *assertion `json:"passkey"`
 }
 
 func validatePassword(pw string) string {
@@ -96,9 +122,20 @@ func (c *credentials) validate() string {
 }
 
 type meDTO struct {
+	ID            int64  `json:"id"`
 	Username      string `json:"username"`
+	Role          string `json:"role"`
 	TOTP          bool   `json:"totp"`
+	Passkeys      int    `json:"passkeys"`
 	ElevatedUntil int64  `json:"elevated_until"`
+}
+
+func (h *Hub) me(u *store.User, elevatedUntil int64) meDTO {
+	d := meDTO{ID: u.ID, Username: u.Username, Role: u.Role, TOTP: u.TOTPSecret != "", ElevatedUntil: elevatedUntil}
+	if keys, err := h.store.Passkeys(u.ID); err == nil {
+		d.Passkeys = len(keys)
+	}
+	return d
 }
 
 func (h *Hub) getSetup(w http.ResponseWriter, r *http.Request) {
@@ -136,7 +173,7 @@ func (h *Hub) postSetup(w http.ResponseWriter, r *http.Request) {
 		h.internalError(w, err)
 		return
 	}
-	u, err := h.store.CreateUser(c.Username, string(hash))
+	u, err := h.store.CreateUser(c.Username, string(hash), store.RoleAdmin)
 	if err != nil {
 		h.internalError(w, err)
 		return
@@ -154,6 +191,10 @@ func (h *Hub) postLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	var c credentials
 	if !readJSON(w, r, &c) {
+		return
+	}
+	if c.Passkey != nil {
+		h.loginWithPasskey(w, r, c.Passkey)
 		return
 	}
 	u, err := h.store.UserByName(strings.TrimSpace(c.Username))
@@ -195,6 +236,9 @@ func (h *Hub) startSession(w http.ResponseWriter, r *http.Request, u *store.User
 		h.internalError(w, err)
 		return
 	}
+	if err := h.store.SetLastLogin(u.ID, time.Now()); err != nil {
+		h.log.Error("recording sign-in time failed", "err", err)
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
 		Value:    token,
@@ -204,7 +248,7 @@ func (h *Hub) startSession(w http.ResponseWriter, r *http.Request, u *store.User
 		Secure:   isHTTPS(r),
 		SameSite: http.SameSiteStrictMode,
 	})
-	writeJSON(w, http.StatusOK, meDTO{Username: u.Username, TOTP: u.TOTPSecret != ""})
+	writeJSON(w, http.StatusOK, h.me(u, 0))
 }
 
 func (h *Hub) postLogout(w http.ResponseWriter, r *http.Request) {
@@ -223,7 +267,7 @@ func (h *Hub) postLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Hub) getMe(w http.ResponseWriter, _ *http.Request, s *store.Session) {
-	writeJSON(w, http.StatusOK, meDTO{Username: s.Username, TOTP: s.TOTPSecret != "", ElevatedUntil: s.ElevatedUntil})
+	writeJSON(w, http.StatusOK, h.me(&s.User, s.ElevatedUntil))
 }
 
 // reauthenticate checks the user's password and, if withCode and two-factor login
@@ -251,13 +295,20 @@ func (h *Hub) reauthenticate(w http.ResponseWriter, r *http.Request, s *store.Se
 }
 
 // postElevate re-authenticates the session for a few minutes (like sudo), which
-// opening a shell requires.
+// opening a shell requires. A passkey replaces password and code.
 func (h *Hub) postElevate(w http.ResponseWriter, r *http.Request, s *store.Session) {
 	var body credentials
 	if !readJSON(w, r, &body) {
 		return
 	}
-	if !h.reauthenticate(w, r, s, body.Password, body.Code, true, "reauth") {
+	detail := ""
+	if body.Passkey != nil {
+		name := h.reauthenticateWithPasskey(w, r, s, body.Passkey)
+		if name == "" {
+			return
+		}
+		detail = fmt.Sprintf("with passkey %q", name)
+	} else if !h.reauthenticate(w, r, s, body.Password, body.Code, true, "reauth") {
 		return
 	}
 	until := time.Now().Add(elevationTTL)
@@ -265,7 +316,7 @@ func (h *Hub) postElevate(w http.ResponseWriter, r *http.Request, s *store.Sessi
 		h.internalError(w, err)
 		return
 	}
-	h.audit(r, s.Username, "reauth", nil, "")
+	h.audit(r, s.Username, "reauth", nil, detail)
 	writeJSON(w, http.StatusOK, map[string]int64{"elevated_until": until.Unix()})
 }
 

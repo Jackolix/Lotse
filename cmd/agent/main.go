@@ -54,7 +54,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `Usage:
-  %[1]s install --hub URL --key KEY --token TOKEN [--allow-shell]
+  %[1]s install --hub URL --key KEY --token TOKEN [--allow-shell] [--no-updates]
                                                   install and start the system service
   %[1]s run [--config PATH]                         run in the foreground
   %[1]s uninstall [--purge]                         stop and remove the service
@@ -112,6 +112,7 @@ func (p *program) Start(service.Service) error {
 		p.log.Error("cannot start agent", "err", err)
 		return err
 	}
+	a.Restart = func(exe string) { restart(exe, p.log) }
 	ctx, cancel := context.WithCancel(context.Background())
 	p.cancel, p.done = cancel, make(chan struct{})
 	go func() {
@@ -151,7 +152,8 @@ func cmdInstall(args []string) error {
 	hub := fs.String("hub", "", "hub URL, e.g. http://hub.lan:8090")
 	key := fs.String("key", "", "hub public key (ssh-ed25519 ...)")
 	token := fs.String("token", "", "enrollment token from the hub's \"Add system\" dialog")
-	allowShell := fs.Bool("allow-shell", false, "let hub admins open a remote shell (as root/SYSTEM) on this machine")
+	allowShell := fs.Bool("allow-shell", false, "let hub users control this machine: shell, files and scripts as root/SYSTEM, processes, services, reboot")
+	noUpdates := fs.Bool("no-updates", false, "refuse self-updates from the hub, even signed ones")
 	cfgPath := fs.String("config", agent.DefaultConfigPath(), "config file")
 	fs.Parse(args)
 
@@ -162,6 +164,7 @@ func cmdInstall(args []string) error {
 	if err != nil {
 		return err
 	}
+	cfg.DisableUpdates = *noUpdates
 	if err := cfg.Save(); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
@@ -193,8 +196,12 @@ func cmdInstall(args []string) error {
 	if cfg.AllowShell {
 		shell = "enabled"
 	}
-	fmt.Printf("%s %s installed and running.\n  config:       %s\n  fingerprint:  %s\n  remote shell: %s\n",
-		version.AgentName, version.Version, cfg.Path(), ssh.FingerprintSHA256(signer.PublicKey()), shell)
+	updates := "signed updates from the hub"
+	if cfg.DisableUpdates {
+		updates = "disabled"
+	}
+	fmt.Printf("%s %s installed and running.\n  config:         %s\n  fingerprint:    %s\n  remote control: %s\n  updates:        %s\n",
+		version.AgentName, version.Version, cfg.Path(), ssh.FingerprintSHA256(signer.PublicKey()), shell, updates)
 	return nil
 }
 

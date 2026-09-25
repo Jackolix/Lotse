@@ -28,11 +28,17 @@ func (s *Store) AddAudit(e AuditEntry) error {
 
 // Audit returns up to limit entries older than beforeID (0 = newest), newest first.
 func (s *Store) Audit(beforeID int64, limit int) ([]AuditEntry, error) {
+	return s.AuditOf("", beforeID, limit)
+}
+
+// AuditOf is Audit restricted to one user's entries; an empty username means everyone.
+func (s *Store) AuditOf(username string, beforeID int64, limit int) ([]AuditEntry, error) {
 	if beforeID <= 0 {
 		beforeID = 1 << 62
 	}
 	rows, err := s.db.Query(`SELECT id, ts, username, action, system_id, system_name, remote, detail
-		FROM audit_log WHERE id < ? ORDER BY id DESC LIMIT ?`, beforeID, limit)
+		FROM audit_log WHERE id < ? AND (? = '' OR username = ? COLLATE NOCASE) ORDER BY id DESC LIMIT ?`,
+		beforeID, username, username, limit)
 	if err != nil {
 		return nil, err
 	}

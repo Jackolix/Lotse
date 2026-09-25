@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // pure Go driver: keeps the hub a static binary
@@ -136,6 +137,49 @@ INSERT INTO alert_rules (name, metric, threshold, duration, created_at) VALUES
 	('High CPU', 'cpu', 90, 300, unixepoch()),
 	('High memory', 'memory', 90, 300, unixepoch()),
 	('Disk almost full', 'disk', 90, 60, unixepoch());
+`, `
+-- Existing accounts predate roles; the only one is the administrator.
+ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'admin';
+ALTER TABLE users ADD COLUMN last_login INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN passkey_handle BLOB; -- random WebAuthn user handle, set on first passkey
+CREATE UNIQUE INDEX users_passkey_handle ON users (passkey_handle);
+CREATE TABLE passkeys (
+	id            INTEGER PRIMARY KEY,
+	user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	name          TEXT NOT NULL,
+	rp_id         TEXT NOT NULL,
+	credential_id BLOB NOT NULL UNIQUE,
+	public_key    BLOB NOT NULL,    -- SubjectPublicKeyInfo, DER
+	algorithm     INTEGER NOT NULL, -- COSE: -7 ES256, -8 EdDSA, -257 RS256
+	sign_count    INTEGER NOT NULL DEFAULT 0,
+	created_at    INTEGER NOT NULL,
+	last_used     INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX passkeys_user ON passkeys (user_id);
+CREATE TABLE scripts (
+	id          INTEGER PRIMARY KEY,
+	name        TEXT NOT NULL,
+	description TEXT NOT NULL DEFAULT '',
+	shell       TEXT NOT NULL, -- sh, bash, powershell, cmd
+	content     TEXT NOT NULL,
+	timeout     INTEGER NOT NULL DEFAULT 300,
+	created_by  TEXT NOT NULL DEFAULT '',
+	created_at  INTEGER NOT NULL,
+	updated_at  INTEGER NOT NULL
+);
+CREATE TABLE script_runs (
+	id          INTEGER PRIMARY KEY,
+	script_id   INTEGER, -- no foreign key: runs outlive scripts; NULL for one-off commands
+	name        TEXT NOT NULL,
+	shell       TEXT NOT NULL,
+	content     TEXT NOT NULL,
+	timeout     INTEGER NOT NULL,
+	username    TEXT NOT NULL,
+	started_at  INTEGER NOT NULL,
+	finished_at INTEGER,
+	targets     TEXT NOT NULL DEFAULT '[]' -- JSON, one result per system
+);
+CREATE INDEX script_runs_started ON script_runs (started_at);
 `}
 
 func (s *Store) migrate() error {
@@ -165,12 +209,33 @@ func (s *Store) migrate() error {
 
 // ---- users & sessions ----
 
+// Roles, from least to most privileged.
+const (
+	RoleViewer   = "viewer"   // sees everything except scripts, files and the full activity log
+	RoleOperator = "operator" // also acts on machines: shells, files, scripts, processes, power, services
+	RoleAdmin    = "admin"    // also manages users, systems, alerts and agent updates
+)
+
+var roleRank = map[string]int{RoleViewer: 1, RoleOperator: 2, RoleAdmin: 3}
+
+// ValidRole reports whether r is one of the roles above.
+func ValidRole(r string) bool { return roleRank[r] > 0 }
+
+// ErrLastAdmin refuses changes that would leave the hub without an administrator.
+var ErrLastAdmin = errors.New("the hub needs at least one administrator")
+
 type User struct {
 	ID           int64
 	Username     string
 	PasswordHash string
 	TOTPSecret   string // base32; empty when two-factor login is off
+	Role         string
+	CreatedAt    int64
+	LastLogin    int64
 }
+
+// Can reports whether the user's role includes role.
+func (u *User) Can(role string) bool { return roleRank[u.Role] >= roleRank[role] }
 
 // Session is a logged-in browser. ElevatedUntil marks a recent re-authentication,
 // which sensitive actions such as opening a shell require.
@@ -180,7 +245,13 @@ type Session struct {
 	ElevatedUntil int64
 }
 
-const userCols = "id, username, password_hash, totp_secret"
+const userCols = "id, username, password_hash, totp_secret, role, created_at, last_login"
+
+func scanUser(row interface{ Scan(...any) error }) (*User, error) {
+	u := &User{}
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.TOTPSecret, &u.Role, &u.CreatedAt, &u.LastLogin)
+	return u, notFound(err)
+}
 
 func (s *Store) CountUsers() (int, error) {
 	var n int
@@ -188,21 +259,83 @@ func (s *Store) CountUsers() (int, error) {
 	return n, err
 }
 
-func (s *Store) CreateUser(username, passwordHash string) (*User, error) {
-	res, err := s.db.Exec("INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
-		username, passwordHash, time.Now().Unix())
+// ErrUsernameTaken is returned when a username exists already (case-insensitive).
+var ErrUsernameTaken = errors.New("that username is taken")
+
+func (s *Store) CreateUser(username, passwordHash, role string) (*User, error) {
+	if !ValidRole(role) {
+		return nil, fmt.Errorf("unknown role %q", role)
+	}
+	now := time.Now().Unix()
+	res, err := s.db.Exec("INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
+		username, passwordHash, role, now)
 	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed: users.username") {
+			return nil, ErrUsernameTaken
+		}
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
-	return &User{ID: id, Username: username, PasswordHash: passwordHash}, nil
+	return &User{ID: id, Username: username, PasswordHash: passwordHash, Role: role, CreatedAt: now}, nil
 }
 
 func (s *Store) UserByName(username string) (*User, error) {
-	u := &User{}
-	err := s.db.QueryRow("SELECT "+userCols+" FROM users WHERE username = ?", username).
-		Scan(&u.ID, &u.Username, &u.PasswordHash, &u.TOTPSecret)
-	return u, notFound(err)
+	return scanUser(s.db.QueryRow("SELECT "+userCols+" FROM users WHERE username = ?", username))
+}
+
+func (s *Store) User(id int64) (*User, error) {
+	return scanUser(s.db.QueryRow("SELECT "+userCols+" FROM users WHERE id = ?", id))
+}
+
+func (s *Store) Users() ([]*User, error) {
+	rows, err := s.db.Query("SELECT " + userCols + " FROM users ORDER BY username COLLATE NOCASE")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*User
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// SetRole changes a user's role. Demoting the last administrator fails with ErrLastAdmin;
+// the check and the update are one statement, so concurrent changes cannot race.
+func (s *Store) SetRole(userID int64, role string) error {
+	if !ValidRole(role) {
+		return fmt.Errorf("unknown role %q", role)
+	}
+	res, err := s.db.Exec(`UPDATE users SET role = ? WHERE id = ? AND (? = 'admin' OR role != 'admin'
+		OR (SELECT COUNT(*) FROM users WHERE role = 'admin') > 1)`, role, userID, role)
+	return s.lastAdminCheck(res, err, userID)
+}
+
+// DeleteUser removes an account with its sessions and passkeys. Deleting the last
+// administrator fails with ErrLastAdmin.
+func (s *Store) DeleteUser(userID int64) error {
+	res, err := s.db.Exec(`DELETE FROM users WHERE id = ? AND (role != 'admin'
+		OR (SELECT COUNT(*) FROM users WHERE role = 'admin') > 1)`, userID)
+	return s.lastAdminCheck(res, err, userID)
+}
+
+func (s *Store) lastAdminCheck(res sql.Result, err error, userID int64) error {
+	if err := affected(res, err); !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	if _, err := s.User(userID); err != nil {
+		return err
+	}
+	return ErrLastAdmin
+}
+
+func (s *Store) SetLastLogin(userID int64, t time.Time) error {
+	_, err := s.db.Exec("UPDATE users SET last_login = ? WHERE id = ?", t.Unix(), userID)
+	return err
 }
 
 func (s *Store) SetPassword(userID int64, passwordHash string) error {
@@ -224,9 +357,10 @@ func (s *Store) CreateSession(tokenHash []byte, userID int64, expires time.Time)
 // Session returns a valid, unexpired session with its user.
 func (s *Store) Session(tokenHash []byte) (*Session, error) {
 	sess := &Session{TokenHash: tokenHash}
-	err := s.db.QueryRow(`SELECT u.id, u.username, u.password_hash, u.totp_secret, s.elevated_until
-		FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?`,
-		tokenHash, time.Now().Unix()).Scan(&sess.ID, &sess.Username, &sess.PasswordHash, &sess.TOTPSecret, &sess.ElevatedUntil)
+	err := s.db.QueryRow(`SELECT u.id, u.username, u.password_hash, u.totp_secret, u.role, u.created_at, u.last_login,
+		s.elevated_until FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?`,
+		tokenHash, time.Now().Unix()).Scan(&sess.ID, &sess.Username, &sess.PasswordHash, &sess.TOTPSecret, &sess.Role,
+		&sess.CreatedAt, &sess.LastLogin, &sess.ElevatedUntil)
 	return sess, notFound(err)
 }
 
@@ -238,6 +372,12 @@ func (s *Store) ElevateSession(tokenHash []byte, until time.Time) error {
 // DeleteOtherSessions logs a user out everywhere except the given session.
 func (s *Store) DeleteOtherSessions(userID int64, keep []byte) error {
 	_, err := s.db.Exec("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?", userID, keep)
+	return err
+}
+
+// DeleteSessions logs a user out everywhere.
+func (s *Store) DeleteSessions(userID int64) error {
+	_, err := s.db.Exec("DELETE FROM sessions WHERE user_id = ?", userID)
 	return err
 }
 

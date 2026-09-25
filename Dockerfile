@@ -22,7 +22,11 @@ ENV CGO_ENABLED=0 LDFLAGS="-s -w -X github.com/Jackolix/Lotse/internal/version.V
 
 # ---- agents for every platform (independent of the image platform, built once) ----
 FROM src AS agents
-RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build <<EOF
+ARG VERSION=dev
+# Release builds sign the agents so hubs can update them; that needs the release key
+# as the "signing_key" build secret. Without it the agents are simply not signed.
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=secret,id=signing_key,env=LOTSE_SIGNING_KEY <<EOF
 set -e
 mkdir -p /out/agents
 for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
@@ -30,8 +34,11 @@ for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 wi
   [ "$os" = windows ] && ext=".exe"
   GOOS=$os GOARCH=$arch go build -trimpath -ldflags "$LDFLAGS" -o /out/agents/lotse-agent-$os-$arch$ext ./cmd/agent
 done
+go run ./cmd/sign -optional -version "$VERSION" /out/agents/lotse-agent-*
 # The hub serves these gzipped (or unpacks on the fly), keeping the image small.
-gzip -9 /out/agents/*
+for f in /out/agents/lotse-agent-*; do
+  case "$f" in *.sig) ;; *) gzip -9 "$f" ;; esac
+done
 EOF
 
 # ---- hub for the image platform ----
@@ -46,7 +53,7 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
 # Root variant: the hub starts as root and drops privileges itself (see below).
 FROM gcr.io/distroless/static-debian13
 LABEL org.opencontainers.image.title="Lotse" \
-      org.opencontainers.image.description="Self-hosted monitoring hub with remote shell and Wake-on-LAN" \
+      org.opencontainers.image.description="Self-hosted monitoring hub with remote shell, files, scripts and Wake-on-LAN" \
       org.opencontainers.image.source="https://github.com/Jackolix/Lotse"
 COPY --from=hub /out/hub /app/hub
 COPY --from=agents /out/agents /app/agents
