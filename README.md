@@ -385,7 +385,8 @@ Ethernet.
 - The web UI uses bcrypt passwords, optional TOTP two-factor login (codes can't be reused), passkeys (WebAuthn with
   user verification, challenges single-use and bound to the session), HttpOnly `SameSite=Strict` session cookies,
   an Origin check on every write and WebSocket, a strict CSP, and a 5-minute lockout after 5 failed logins or
-  re-authentications per IP.
+  re-authentications per IP (per /64 for IPv6). Attempts count from the moment they start, so parallel requests
+  cannot get around the limit, and a successful sign-in does not reset it.
 - Every API route requires a role (viewer, operator, administrator). Terminals, files, scripts, process and service
   control, reboots and user changes also need a re-authentication within the last 10 minutes. Changing your password
   signs out all other sessions.

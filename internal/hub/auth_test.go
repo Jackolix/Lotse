@@ -108,3 +108,48 @@ func TestElevateAndEnableTOTP(t *testing.T) {
 		}
 	}
 }
+
+// Parallel sign-in attempts must not get past the limit: they are counted before
+// the password check, not after it fails.
+func TestParallelLoginAttemptsAreLimited(t *testing.T) {
+	h, srv := newTestHub(t)
+	newSession(t, h, false)
+	// Hold password checks back until every request has arrived.
+	for range cap(h.pwChecks) {
+		h.pwChecks <- struct{}{}
+	}
+	const requests = 4 * loginFailures
+	statuses := make(chan int, requests)
+	for range requests {
+		go func() {
+			resp, err := http.Post(srv.URL+"/api/login", "application/json",
+				strings.NewReader(`{"username":"admin","password":"wrong password"}`))
+			if err != nil {
+				statuses <- 0
+				return
+			}
+			resp.Body.Close()
+			statuses <- resp.StatusCode
+		}()
+	}
+	count := map[int]int{}
+	collect := func(n int) {
+		t.Helper()
+		for range n {
+			select {
+			case s := <-statuses:
+				count[s]++
+			case <-time.After(10 * time.Second):
+				t.Fatalf("timed out; statuses so far: %v", count)
+			}
+		}
+	}
+	collect(requests - loginFailures) // refused right away
+	for range cap(h.pwChecks) {
+		<-h.pwChecks
+	}
+	collect(loginFailures)
+	if count[http.StatusUnauthorized] != loginFailures || count[http.StatusTooManyRequests] != requests-loginFailures {
+		t.Fatalf("statuses %v: want %d password checks and the rest refused", count, loginFailures)
+	}
+}

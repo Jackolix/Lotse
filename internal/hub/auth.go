@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"image/png"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -183,18 +184,23 @@ func (h *Hub) postSetup(w http.ResponseWriter, r *http.Request) {
 	h.startSession(w, r, u)
 }
 
+func writeTooManyAttempts(w http.ResponseWriter) {
+	writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again in a few minutes")
+}
+
 func (h *Hub) postLogin(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
-	if !h.limiter.allow(ip) {
-		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again in a few minutes")
+	a := h.limiter.begin(clientIP(r))
+	if a == nil {
+		writeTooManyAttempts(w)
 		return
 	}
+	defer a.end()
 	var c credentials
 	if !readJSON(w, r, &c) {
 		return
 	}
 	if c.Passkey != nil {
-		h.loginWithPasskey(w, r, c.Passkey)
+		h.loginWithPasskey(w, r, a, c.Passkey)
 		return
 	}
 	u, err := h.store.UserByName(strings.TrimSpace(c.Username))
@@ -206,8 +212,8 @@ func (h *Hub) postLogin(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		hash = []byte(u.PasswordHash)
 	}
-	if bcrypt.CompareHashAndPassword(hash, []byte(c.Password)) != nil || err != nil {
-		h.limiter.fail(ip)
+	if !h.passwordMatches(r, hash, c.Password) || err != nil {
+		a.fail()
 		h.audit(r, c.Username, "login_failed", nil, "wrong username or password")
 		writeError(w, http.StatusUnauthorized, "invalid username or password")
 		return
@@ -218,13 +224,12 @@ func (h *Hub) postLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !h.checkTOTP(u.ID, u.TOTPSecret, c.Code) {
-			h.limiter.fail(ip)
+			a.fail()
 			h.audit(r, u.Username, "login_failed", nil, "wrong two-factor code")
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid code", "totp_required": true})
 			return
 		}
 	}
-	h.limiter.reset(ip)
 	h.audit(r, u.Username, "login", nil, "")
 	h.startSession(w, r, u)
 }
@@ -273,24 +278,24 @@ func (h *Hub) getMe(w http.ResponseWriter, _ *http.Request, s *store.Session) {
 // reauthenticate checks the user's password and, if withCode and two-factor login
 // is on, a TOTP code. It is rate limited like logins, since it is effectively one.
 func (h *Hub) reauthenticate(w http.ResponseWriter, r *http.Request, s *store.Session, password, code string, withCode bool, action string) bool {
-	ip := clientIP(r)
-	if !h.limiter.allow(ip) {
-		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again in a few minutes")
+	a := h.limiter.begin(clientIP(r))
+	if a == nil {
+		writeTooManyAttempts(w)
 		return false
 	}
-	if bcrypt.CompareHashAndPassword([]byte(s.PasswordHash), []byte(password)) != nil {
-		h.limiter.fail(ip)
+	defer a.end()
+	if !h.passwordMatches(r, []byte(s.PasswordHash), password) {
+		a.fail()
 		h.audit(r, s.Username, action+"_failed", nil, "wrong password")
 		writeError(w, http.StatusForbidden, "wrong password")
 		return false
 	}
 	if withCode && s.TOTPSecret != "" && !h.checkTOTP(s.ID, s.TOTPSecret, code) {
-		h.limiter.fail(ip)
+		a.fail()
 		h.audit(r, s.Username, action+"_failed", nil, "wrong two-factor code")
 		writeError(w, http.StatusForbidden, "invalid two-factor code")
 		return false
 	}
-	h.limiter.reset(ip)
 	return true
 }
 
@@ -455,18 +460,38 @@ func (h *Hub) checkTOTP(userID int64, secret, code string) bool {
 	return false
 }
 
+// isHTTPS decides the cookie's Secure flag and the suggested hub URL. It believes
+// X-Forwarded-Proto from anyone: a forged header can only make the sender's own
+// cookie stricter, and proxies without HUB_TRUSTED_PROXIES still get Secure cookies.
 func isHTTPS(r *http.Request) bool {
 	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
 
-// loginLimiter locks an IP out for a while after repeated failed logins.
+// passwordMatches compares a password with its bcrypt hash. Only a few comparisons
+// run at once, so a flood of sign-in attempts cannot take all of the hub's CPU.
+func (h *Hub) passwordMatches(r *http.Request, hash []byte, password string) bool {
+	select {
+	case h.pwChecks <- struct{}{}:
+	case <-r.Context().Done():
+		return false
+	}
+	defer func() { <-h.pwChecks }()
+	return bcrypt.CompareHashAndPassword(hash, []byte(password)) == nil
+}
+
+// maxTrackedClients bounds the limiter's memory.
+const maxTrackedClients = 10000
+
+// loginLimiter locks a client out for a while after repeated failed sign-ins or
+// password confirmations. IPv6 clients count per /64, since a single host can
+// usually pick addresses from a whole /64.
 type loginLimiter struct {
 	mu    sync.Mutex
 	fails map[string]*failRecord
 }
 
 type failRecord struct {
-	count int
+	count int // failed attempts and attempts in progress
 	first time.Time
 }
 
@@ -474,36 +499,101 @@ func newLoginLimiter() *loginLimiter {
 	return &loginLimiter{fails: map[string]*failRecord{}}
 }
 
-func (l *loginLimiter) allow(ip string) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	rec := l.fails[ip]
-	if rec == nil {
-		return true
+// clientKey is what the limiter counts: the IP address, or its /64 for IPv6.
+func clientKey(ip string) string {
+	a, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
 	}
-	if time.Since(rec.first) > loginLockout {
-		delete(l.fails, ip)
-		return true
+	if a = a.Unmap(); a.Is6() {
+		p, _ := a.Prefix(64)
+		return p.String()
 	}
-	return rec.count < loginFailures
+	return a.String()
 }
 
-func (l *loginLimiter) fail(ip string) {
+// attempt is a sign-in or password confirmation in progress. It counts against the
+// client from the start, so parallel requests cannot all get past the limit before
+// the first failure is recorded.
+type attempt struct {
+	l      *loginLimiter
+	key    string
+	rec    *failRecord
+	failed bool
+}
+
+// begin reserves an attempt for ip, or returns nil while the client is locked out.
+// Call end when the request is done, and fail before that if the credentials were wrong.
+func (l *loginLimiter) begin(ip string) *attempt {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if len(l.fails) > 10000 { // bound memory; stale entries are harmless to drop
-		clear(l.fails)
-	}
-	rec := l.fails[ip]
-	if rec == nil {
-		rec = &failRecord{first: time.Now()}
-		l.fails[ip] = rec
+	key := clientKey(ip)
+	rec := l.recordLocked(key, time.Now(), true)
+	if rec.count >= loginFailures {
+		return nil
 	}
 	rec.count++
+	return &attempt{l: l, key: key, rec: rec}
 }
 
-func (l *loginLimiter) reset(ip string) {
+// locked reports whether ip may not try right now, without using up an attempt.
+func (l *loginLimiter) locked(ip string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	delete(l.fails, ip)
+	rec := l.recordLocked(clientKey(ip), time.Now(), false)
+	return rec != nil && rec.count >= loginFailures
+}
+
+// fail keeps the attempt counted.
+func (a *attempt) fail() { a.failed = true }
+
+// end gives the attempt back unless it failed. A success does not wipe earlier
+// failures: otherwise anyone with an account could sign in between guesses at
+// another one and never be locked out.
+func (a *attempt) end() {
+	if a.failed {
+		return
+	}
+	a.l.mu.Lock()
+	defer a.l.mu.Unlock()
+	if a.rec.count--; a.rec.count == 0 && a.l.fails[a.key] == a.rec {
+		delete(a.l.fails, a.key) // nothing failed: keep no record
+	}
+}
+
+func (l *loginLimiter) recordLocked(key string, now time.Time, create bool) *failRecord {
+	rec := l.fails[key]
+	if rec != nil && now.Sub(rec.first) > loginLockout {
+		delete(l.fails, key)
+		rec = nil
+	}
+	if rec == nil && create {
+		if len(l.fails) >= maxTrackedClients {
+			l.evictLocked(now)
+		}
+		rec = &failRecord{first: now}
+		l.fails[key] = rec
+	}
+	return rec
+}
+
+// evictLocked makes room for a new client: expired records go first, then the
+// oldest one that is not locked out, so flooding the limiter with new addresses
+// does not set a locked-out client free.
+func (l *loginLimiter) evictLocked(now time.Time) {
+	var victimKey string
+	var victim *failRecord
+	for k, rec := range l.fails {
+		if now.Sub(rec.first) > loginLockout {
+			delete(l.fails, k)
+			continue
+		}
+		locked, victimLocked := rec.count >= loginFailures, victim != nil && victim.count >= loginFailures
+		if victim == nil || (victimLocked && !locked) || (locked == victimLocked && rec.first.Before(victim.first)) {
+			victimKey, victim = k, rec
+		}
+	}
+	if len(l.fails) >= maxTrackedClients {
+		delete(l.fails, victimKey)
+	}
 }

@@ -51,8 +51,8 @@ func requestOptions(challenge, rpID string, allow []credentialDescriptor) map[st
 // postLoginPasskeyOptions starts a passkey sign-in. The browser lets the user pick
 // any passkey it has for this site (discoverable credentials).
 func (h *Hub) postLoginPasskeyOptions(w http.ResponseWriter, r *http.Request) {
-	if !h.limiter.allow(clientIP(r)) {
-		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again in a few minutes")
+	if h.limiter.locked(clientIP(r)) {
+		writeTooManyAttempts(w)
 		return
 	}
 	_, rpID, err := relyingParty(r)
@@ -166,15 +166,11 @@ func (h *Hub) verifyAssertion(r *http.Request, a *assertion, purpose string, ses
 	return key, nil
 }
 
-func (h *Hub) loginWithPasskey(w http.ResponseWriter, r *http.Request, a *assertion) {
-	ip := clientIP(r)
-	if !h.limiter.allow(ip) {
-		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again in a few minutes")
-		return
-	}
+// loginWithPasskey signs in with a passkey; postLogin has reserved the attempt.
+func (h *Hub) loginWithPasskey(w http.ResponseWriter, r *http.Request, at *attempt, a *assertion) {
 	key, err := h.verifyAssertion(r, a, "login", nil)
 	if err != nil {
-		h.limiter.fail(ip)
+		at.fail()
 		h.audit(r, "", "login_failed", nil, "passkey: "+err.Error())
 		writeError(w, http.StatusUnauthorized, err.Error())
 		return
@@ -184,7 +180,6 @@ func (h *Hub) loginWithPasskey(w http.ResponseWriter, r *http.Request, a *assert
 		h.internalError(w, err)
 		return
 	}
-	h.limiter.reset(ip)
 	h.audit(r, u.Username, "login", nil, fmt.Sprintf("with passkey %q", key.Name))
 	h.startSession(w, r, u)
 }
@@ -192,22 +187,22 @@ func (h *Hub) loginWithPasskey(w http.ResponseWriter, r *http.Request, a *assert
 // reauthenticateWithPasskey confirms the session's user with one of their passkeys
 // and returns its name, or "" after writing an error.
 func (h *Hub) reauthenticateWithPasskey(w http.ResponseWriter, r *http.Request, s *store.Session, a *assertion) string {
-	ip := clientIP(r)
-	if !h.limiter.allow(ip) {
-		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again in a few minutes")
+	at := h.limiter.begin(clientIP(r))
+	if at == nil {
+		writeTooManyAttempts(w)
 		return ""
 	}
+	defer at.end()
 	key, err := h.verifyAssertion(r, a, "elevate", s.TokenHash)
 	if err == nil && key.UserID != s.ID {
 		err = errors.New("that passkey belongs to another account")
 	}
 	if err != nil {
-		h.limiter.fail(ip)
+		at.fail()
 		h.audit(r, s.Username, "reauth_failed", nil, "passkey: "+err.Error())
 		writeError(w, http.StatusForbidden, err.Error())
 		return ""
 	}
-	h.limiter.reset(ip)
 	return key.Name
 }
 

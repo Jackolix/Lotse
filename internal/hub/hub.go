@@ -13,6 +13,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -63,15 +64,16 @@ func ConfigFromEnv() Config {
 }
 
 type Hub struct {
-	cfg     Config
-	log     *slog.Logger
-	store   *store.Store
-	signer  ssh.Signer
-	broker  *broker
-	limiter *loginLimiter
-	proxies []netip.Prefix // trusted reverse proxies
-	setupMu sync.Mutex
-	agentWG sync.WaitGroup
+	cfg      Config
+	log      *slog.Logger
+	store    *store.Store
+	signer   ssh.Signer
+	broker   *broker
+	limiter  *loginLimiter
+	pwChecks chan struct{}  // bounds concurrent bcrypt comparisons
+	proxies  []netip.Prefix // trusted reverse proxies
+	setupMu  sync.Mutex
+	agentWG  sync.WaitGroup
 
 	alerts     *alertEngine
 	totpMu     sync.Mutex
@@ -108,6 +110,7 @@ func New(cfg Config, log *slog.Logger) (*Hub, error) {
 		store:    st,
 		signer:   signer,
 		limiter:  newLoginLimiter(),
+		pwChecks: make(chan struct{}, max(1, runtime.GOMAXPROCS(0)/2)),
 		proxies:  proxies,
 		totpUsed: map[int64]int64{},
 		agents:   map[int64]*agentConn{},

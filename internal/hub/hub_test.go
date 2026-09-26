@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -290,19 +291,82 @@ func TestSetupLoginAndAuth(t *testing.T) {
 	}
 }
 
+// failLogin records one failed attempt from ip.
+func failLogin(t *testing.T, l *loginLimiter, ip string) {
+	t.Helper()
+	a := l.begin(ip)
+	if a == nil {
+		t.Fatalf("%s locked out too early", ip)
+	}
+	a.fail()
+	a.end()
+}
+
 func TestLoginLockout(t *testing.T) {
 	l := newLoginLimiter()
 	for range loginFailures {
-		if !l.allow("1.2.3.4") {
-			t.Fatal("locked out too early")
-		}
-		l.fail("1.2.3.4")
+		failLogin(t, l, "1.2.3.4")
 	}
-	if l.allow("1.2.3.4") {
+	if l.begin("1.2.3.4") != nil || !l.locked("1.2.3.4") {
 		t.Fatal("not locked out after repeated failures")
 	}
-	if !l.allow("5.6.7.8") {
+	if l.begin("5.6.7.8") == nil {
 		t.Fatal("other IPs must not be affected")
+	}
+
+	// IPv6 clients count per /64: one host can usually use any address in it.
+	for i := range loginFailures {
+		failLogin(t, l, fmt.Sprintf("2001:db8:1:2::%x", i+1))
+	}
+	if l.begin("2001:db8:1:2:ffff::1") != nil {
+		t.Error("an IPv6 client escaped the lockout by changing its address")
+	}
+	if l.begin("2001:db8:1:3::1") == nil {
+		t.Error("another /64 was locked out")
+	}
+
+	// Requests that never checked a password give their attempt back and leave no record.
+	for range 3 * loginFailures {
+		a := l.begin("9.9.9.9")
+		if a == nil {
+			t.Fatal("attempts without a password check were counted")
+		}
+		a.end()
+	}
+	if _, ok := l.fails["9.9.9.9"]; ok {
+		t.Error("attempts without failures left a record")
+	}
+}
+
+// Attempts count from the start, so parallel requests cannot all pass the check
+// before the first failure is recorded.
+func TestLoginLimiterCountsAttemptsInProgress(t *testing.T) {
+	l := newLoginLimiter()
+	started := 0
+	for range 4 * loginFailures {
+		if l.begin("1.2.3.4") != nil {
+			started++
+		}
+	}
+	if started != loginFailures {
+		t.Fatalf("%d attempts could start at once, want %d", started, loginFailures)
+	}
+}
+
+// Filling the limiter with new addresses must not free locked-out clients.
+func TestLoginLimiterEvictsWithoutForgettingLockouts(t *testing.T) {
+	l := newLoginLimiter()
+	for range loginFailures {
+		failLogin(t, l, "1.2.3.4")
+	}
+	for i := range maxTrackedClients + 50 {
+		failLogin(t, l, fmt.Sprintf("10.%d.%d.%d", i>>16&255, i>>8&255, i&255))
+	}
+	if len(l.fails) > maxTrackedClients {
+		t.Errorf("limiter tracks %d clients, max %d", len(l.fails), maxTrackedClients)
+	}
+	if !l.locked("1.2.3.4") {
+		t.Error("a flood of new addresses lifted a lockout")
 	}
 }
 
