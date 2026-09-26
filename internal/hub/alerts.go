@@ -181,16 +181,18 @@ func (h *Hub) evaluateOffline(now time.Time) {
 	if err != nil {
 		return
 	}
+	var events []*alertEvent
+	e := h.alerts
+	e.mu.Lock()
+	// Read who is online under e.mu: agentOnline takes it too, so a system cannot
+	// connect between this snapshot and its offline time being looked up below.
+	// (Lock order: e.mu before h.mu.)
 	h.mu.Lock()
 	online := make(map[int64]bool, len(h.agents))
 	for id := range h.agents {
 		online[id] = true
 	}
 	h.mu.Unlock()
-
-	var events []*alertEvent
-	e := h.alerts
-	e.mu.Lock()
 	for _, r := range e.rules {
 		if r.Metric != "offline" {
 			continue
