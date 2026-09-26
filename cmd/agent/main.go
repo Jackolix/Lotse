@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/kardianos/service"
@@ -258,10 +259,49 @@ func newLogger(cfgPath string) *slog.Logger {
 	return slog.New(slog.NewTextHandler(w, nil))
 }
 
-// openLogFile rotates the log once it passes 5 MB, keeping one previous file.
-func openLogFile(path string) (*os.File, error) {
-	if fi, err := os.Stat(path); err == nil && fi.Size() > 5<<20 {
+// maxLogSize is when the log file is rotated; one previous file is kept.
+const maxLogSize = 5 << 20
+
+// logFile is an append-only log that rotates itself, since the agent may run for
+// months without a restart.
+type logFile struct {
+	mu   sync.Mutex
+	path string
+	f    *os.File
+	size int64
+}
+
+func openLogFile(path string) (*logFile, error) {
+	l := &logFile{path: path}
+	if fi, err := os.Stat(path); err == nil && fi.Size() > maxLogSize {
 		_ = os.Rename(path, path+".1")
 	}
-	return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	return l, l.open()
+}
+
+func (l *logFile) open() error {
+	f, err := os.OpenFile(l.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return err
+	}
+	l.f = f
+	if fi, err := f.Stat(); err == nil {
+		l.size = fi.Size()
+	}
+	return nil
+}
+
+func (l *logFile) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.size+int64(len(p)) > maxLogSize {
+		l.f.Close()
+		_ = os.Rename(l.path, l.path+".1")
+		if err := l.open(); err != nil {
+			return 0, err
+		}
+	}
+	n, err := l.f.Write(p)
+	l.size += int64(n)
+	return n, err
 }
