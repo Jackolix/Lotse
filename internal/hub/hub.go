@@ -193,6 +193,9 @@ func (h *Hub) Run(ctx context.Context) error {
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()
 	h.log.Info("hub listening", "addr", h.cfg.Addr, "version", version.Version, "hub_key", h.PublicKey())
+	if n, err := h.store.CountUsers(); err == nil && n == 0 {
+		h.log.Warn("no account yet: whoever opens the web UI first creates the administrator, so do that before the hub is reachable from untrusted networks")
+	}
 
 	select {
 	case err := <-errc:

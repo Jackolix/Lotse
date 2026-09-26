@@ -96,7 +96,8 @@ curl -fLO https://raw.githubusercontent.com/Jackolix/Lotse/main/docker-compose.y
 docker compose up -d
 ```
 
-1. Open `http://<docker-host>:8090` and create the admin account.
+1. Open `http://<docker-host>:8090` and create the admin account. Do this before the hub is reachable from
+   untrusted networks: until an account exists, whoever opens it first becomes the administrator.
 2. Click **Add system**, pick Linux, macOS or Windows, and run the command it shows on that machine.
 3. The machine appears within seconds.
 
@@ -235,7 +236,8 @@ Two options change what the hub may do on the machine: `--allow-shell` (Windows:
 [self-updates](#agent-updates).
 
 An enrollment token is valid for one hour and can enroll any number of machines. An agent deletes its token
-once the hub has accepted it.
+once the hub has accepted it. While the install command runs, other users on that machine can see the token in the
+process list; on shared machines, create a short-lived token with `hub token --ttl 10m` (below).
 
 Tokens can also be created without the UI, e.g. for Ansible:
 
