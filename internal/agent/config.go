@@ -2,11 +2,14 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 
 	"github.com/Jackolix/Lotse/internal/sshkey"
 	"github.com/Jackolix/Lotse/internal/version"
@@ -79,14 +82,22 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// Save writes the config readable only by its owner (root / SYSTEM).
+// Save writes the config readable only by its owner (root / SYSTEM). The folder is
+// locked down too, but only if it holds nothing else: a config placed in a shared
+// folder such as /etc must not take that folder away from everyone else.
 func (c *Config) Save() error {
 	dir := filepath.Dir(c.path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	if err := restrictDir(dir); err != nil {
-		return fmt.Errorf("restrict permissions on %s: %w", dir, err)
+	dedicated, err := c.DedicatedDir()
+	if err != nil {
+		return err
+	}
+	if dedicated {
+		if err := restrictDir(dir); err != nil {
+			return fmt.Errorf("restrict permissions on %s: %w", dir, err)
+		}
 	}
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
@@ -101,3 +112,49 @@ func (c *Config) Save() error {
 
 // Path returns the file the config was loaded from or will be saved to.
 func (c *Config) Path() string { return c.path }
+
+// ownFiles are the files the agent keeps in its config folder.
+func (c *Config) ownFiles() []string {
+	name := filepath.Base(c.path)
+	key := filepath.Base(c.KeyPath())
+	return []string{name, name + ".tmp", key, key + ".tmp", "agent.log", "agent.log.1"}
+}
+
+// DedicatedDir reports whether the config folder holds nothing but the agent's
+// own files (or does not exist yet), so tightening its permissions or deleting it
+// cannot affect anything else.
+func (c *Config) DedicatedDir() (bool, error) {
+	entries, err := os.ReadDir(filepath.Dir(c.path))
+	if errors.Is(err, fs.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	own := c.ownFiles()
+	for _, e := range entries {
+		if !slices.Contains(own, e.Name()) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// PurgeConfig deletes the config at path, the agent key and the log, then the
+// folder if nothing else is left in it.
+func PurgeConfig(path string) error {
+	c := &Config{path: path}
+	dir := filepath.Dir(c.path)
+	for _, name := range c.ownFiles() {
+		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	if err := os.Remove(dir); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if entries, rerr := os.ReadDir(dir); rerr == nil && len(entries) > 0 {
+			return nil // other files live there; leave the folder alone
+		}
+		return err
+	}
+	return nil
+}

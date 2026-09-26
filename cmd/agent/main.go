@@ -164,6 +164,14 @@ func cmdInstall(args []string) error {
 	if err != nil {
 		return err
 	}
+	// The folder is locked down to root/SYSTEM and deleted by uninstall --purge, so
+	// it must belong to the agent alone.
+	if ok, err := cfg.DedicatedDir(); err != nil {
+		return err
+	} else if !ok {
+		return fmt.Errorf("%s holds other files; give the agent's config a folder of its own, e.g. %s",
+			filepath.Dir(cfg.Path()), agent.DefaultConfigPath())
+	}
 	cfg.DisableUpdates = *noUpdates
 	if err := cfg.Save(); err != nil {
 		return fmt.Errorf("write config: %w", err)
@@ -225,7 +233,7 @@ func cmdUninstall(args []string) error {
 		}
 	}
 	if *purge {
-		if err := os.RemoveAll(filepath.Dir(*cfgPath)); err != nil {
+		if err := agent.PurgeConfig(*cfgPath); err != nil {
 			return err
 		}
 	}
