@@ -8,6 +8,7 @@ import (
 	"slices"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/shirou/gopsutil/v4/process"
 
@@ -76,7 +77,11 @@ func Processes(limit int, withCommands bool) (protocol.ProcessList, error) {
 		if withCommands {
 			if cmd, err := e.p.Cmdline(); err == nil {
 				if len(cmd) > 300 {
-					cmd = cmd[:300] + "…"
+					n := 300
+					for n > 0 && !utf8.RuneStart(cmd[n]) { // don't split a character
+						n--
+					}
+					cmd = cmd[:n] + "…"
 				}
 				p.Command = cmd
 			}

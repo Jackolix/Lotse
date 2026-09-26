@@ -13,6 +13,11 @@
 
   let { id }: { id: number } = $props()
 
+  // The hub keeps the last 128 KiB of output per system, and so does the page: a
+  // chatty script would otherwise slow the tab down more and more. Trimming at twice
+  // that keeps it from copying the whole output on every chunk.
+  const MAX_OUTPUT = 128 * 1024
+
   let run = $state<Run | null>(null)
   let error = $state('')
   let collapsed = $state<Record<number, boolean>>({})
@@ -35,7 +40,14 @@
     es.addEventListener('output', (e) => {
       const { system_id, data } = JSON.parse(e.data) as { system_id: number; data: string }
       const t = target(system_id)
-      if (t) t.output += data
+      if (!t) return
+      let output = t.output + data
+      if (output.length > 2 * MAX_OUTPUT) {
+        output = output.slice(-MAX_OUTPUT)
+        if (/^[\uDC00-\uDFFF]/.test(output)) output = output.slice(1) // half of a split emoji
+        t.truncated = true
+      }
+      t.output = output
     })
     es.addEventListener('done', (e) => {
       const { finished_at } = JSON.parse(e.data) as { finished_at: number | null }

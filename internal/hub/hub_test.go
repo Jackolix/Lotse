@@ -370,6 +370,15 @@ func TestLoginLimiterEvictsWithoutForgettingLockouts(t *testing.T) {
 	}
 }
 
+func TestTruncateKeepsCharactersWhole(t *testing.T) {
+	if got := truncate("grüße", 3); got != "gr" {
+		t.Errorf("truncate = %q, want %q", got, "gr")
+	}
+	if got := truncate("grüße", 4); got != "grü" {
+		t.Errorf("truncate = %q, want %q", got, "grü")
+	}
+}
+
 // metricValues must follow store.MetricCols, whose names are the Metrics JSON keys.
 func TestMetricValuesOrder(t *testing.T) {
 	m := protocol.Metrics{CPU: 1, MemUsed: 2, MemTotal: 3, SwapUsed: 4, SwapTotal: 5, DiskUsed: 6, DiskTotal: 7,

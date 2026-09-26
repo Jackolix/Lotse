@@ -3,6 +3,7 @@ package hub
 import (
 	"net/http"
 	"strconv"
+	"unicode/utf8"
 
 	"github.com/Jackolix/Lotse/internal/hub/store"
 )
@@ -48,9 +49,13 @@ func (h *Hub) getAudit(w http.ResponseWriter, r *http.Request, s *store.Session)
 	writeJSON(w, http.StatusOK, map[string]any{"entries": entries, "more": more})
 }
 
+// truncate shortens s to at most n bytes without splitting a UTF-8 character.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
 	}
 	return s[:n]
 }

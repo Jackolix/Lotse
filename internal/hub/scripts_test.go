@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Jackolix/Lotse/internal/hub/store"
 )
@@ -162,5 +163,69 @@ func TestInterruptedRunsAreClosed(t *testing.T) {
 	got, _ := h.store.Run(rec.ID)
 	if got.FinishedAt == nil || !strings.Contains(got.Targets, "the hub restarted") {
 		t.Errorf("run after restart: %+v", got)
+	}
+}
+
+func TestTailBufferKeepsTheEnd(t *testing.T) {
+	stream := []byte(strings.Repeat("0123456789abcdefghijklmnopqrstuvwxyz", 20))
+	for _, limit := range []int{1, 7, 64, 1000} {
+		tb := &tailBuffer{max: limit}
+		written := 0
+		for i, size := 0, 1; written < len(stream); i, size = i+1, size%13+1 {
+			n := min(size, len(stream)-written)
+			tb.Write(stream[written : written+n])
+			written += n
+			want := stream[max(0, written-limit):written]
+			if got := tb.Bytes(); string(got) != string(want) {
+				t.Fatalf("max %d after %d bytes: got %q, want %q", limit, written, got, want)
+			}
+			if tb.dropped != (written > limit) {
+				t.Fatalf("max %d after %d bytes: dropped = %v", limit, written, tb.dropped)
+			}
+		}
+	}
+	// A chunk larger than the buffer keeps its end.
+	tb := &tailBuffer{max: 4}
+	tb.Write([]byte("abcdefgh"))
+	if got := string(tb.Bytes()); got != "efgh" || !tb.dropped {
+		t.Errorf("got %q (dropped %v), want efgh", got, tb.dropped)
+	}
+	// Once older output is dropped, the kept part starts with a whole character.
+	tb = &tailBuffer{max: 4}
+	tb.Write([]byte("xüabc")) // ü is two bytes: the last 4 bytes start inside it
+	if got := string(tb.Bytes()); got != "abc" {
+		t.Errorf("got %q, want the output from the next whole character", got)
+	}
+}
+
+// Output arrives in arbitrary chunks; viewers must never get half a character.
+func TestRunOutputKeepsCharactersWhole(t *testing.T) {
+	ar := newActiveRun(&store.ScriptRun{}, func() {}, []*runTarget{{SystemID: 1}})
+	events := make(chan runEvent, 100)
+	ar.subs[events] = struct{}{}
+
+	text := "grüße 🌍 ok"
+	for i := range len(text) { // one byte at a time
+		ar.write(0, []byte(text[i:i+1]))
+		if i == 2 { // in the middle of "ü": the snapshot holds back its first byte
+			if got := ar.snapshot().Targets[0].Output; got != "gr" {
+				t.Errorf("snapshot mid-character = %q, want %q", got, "gr")
+			}
+		}
+	}
+	close(events)
+	var live strings.Builder
+	for ev := range events {
+		data := ev.data.(map[string]any)["data"].(string)
+		if !utf8.ValidString(data) {
+			t.Errorf("viewers got a split character: %q", data)
+		}
+		live.WriteString(data)
+	}
+	if live.String() != text {
+		t.Errorf("live output %q, want %q", live.String(), text)
+	}
+	if got := ar.snapshot().Targets[0].Output; got != text {
+		t.Errorf("stored output %q, want %q", got, text)
 	}
 }

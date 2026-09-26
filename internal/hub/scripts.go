@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -163,9 +164,19 @@ type activeRun struct {
 
 	mu      sync.Mutex
 	targets []*runTarget
-	output  [][]byte // per target, bounded by maxRunOutput
+	output  []*tailBuffer // per target: the newest maxRunOutput bytes
+	partial [][]byte      // per target: a UTF-8 character split across chunks, not yet sent live
 	subs    map[chan runEvent]struct{}
 	done    bool
+}
+
+func newActiveRun(rec *store.ScriptRun, cancel context.CancelFunc, targets []*runTarget) *activeRun {
+	ar := &activeRun{rec: rec, cancel: cancel, targets: targets, output: make([]*tailBuffer, len(targets)),
+		partial: make([][]byte, len(targets)), subs: map[chan runEvent]struct{}{}}
+	for i := range ar.output {
+		ar.output[i] = &tailBuffer{max: maxRunOutput}
+	}
+	return ar
 }
 
 func (ar *activeRun) publishLocked(ev runEvent) {
@@ -183,11 +194,15 @@ func (ar *activeRun) snapshot() runDTO {
 	return ar.snapshotLocked()
 }
 
+// snapshotLocked copies the run's state. Output held back from live viewers (a
+// character still incomplete) is left out, so a viewer who subscribes now gets it
+// exactly once, with the next chunk.
 func (ar *activeRun) snapshotLocked() runDTO {
 	out := make([]*runTarget, len(ar.targets))
 	for i, t := range ar.targets {
 		c := *t
-		c.Output = string(ar.output[i])
+		b := ar.output[i].Bytes()
+		c.Output = string(b[:len(b)-min(len(b), len(ar.partial[i]))])
 		out[i] = &c
 	}
 	rec := *ar.rec
@@ -203,17 +218,76 @@ func (ar *activeRun) update(i int, fn func(t *runTarget)) {
 	ar.publishLocked(runEvent{"target", &c})
 }
 
-// write appends output of target i, keeping the newest maxRunOutput bytes.
+// write appends output of target i, keeping the newest maxRunOutput bytes, and
+// sends it to viewers. Output arrives in arbitrary chunks, so a character split
+// across two of them waits for the rest instead of reaching viewers as "��".
 func (ar *activeRun) write(i int, p []byte) {
 	ar.mu.Lock()
 	defer ar.mu.Unlock()
-	buf := append(ar.output[i], p...)
-	if len(buf) > maxRunOutput {
-		buf = append(buf[:0:0], buf[len(buf)-maxRunOutput:]...)
-		ar.targets[i].Truncated = true
+	ar.output[i].Write(p)
+	ar.targets[i].Truncated = ar.output[i].dropped
+	live := append(ar.partial[i], p...)
+	n := completeUTF8(live)
+	ar.partial[i] = bytes.Clone(live[n:])
+	if n > 0 && len(ar.subs) > 0 {
+		ar.publishLocked(runEvent{"output", map[string]any{"system_id": ar.targets[i].SystemID, "data": string(live[:n])}})
 	}
-	ar.output[i] = buf
-	ar.publishLocked(runEvent{"output", map[string]any{"system_id": ar.targets[i].SystemID, "data": string(p)}})
+}
+
+// completeUTF8 returns the length of b without an incomplete UTF-8 character at its end.
+func completeUTF8(b []byte) int {
+	for i := len(b) - 1; i >= 0 && i >= len(b)-utf8.UTFMax; i-- {
+		if utf8.RuneStart(b[i]) {
+			if utf8.FullRune(b[i:]) {
+				return len(b)
+			}
+			return i
+		}
+	}
+	return len(b)
+}
+
+// tailBuffer keeps the last max bytes written to it in a ring, so long output
+// costs no more than copying each byte once.
+type tailBuffer struct {
+	max     int
+	buf     []byte // grows to max, then wraps around
+	start   int    // oldest byte once buf is full
+	dropped bool   // older output was discarded
+}
+
+func (t *tailBuffer) Write(p []byte) {
+	if len(p) >= t.max {
+		t.dropped = t.dropped || len(t.buf) > 0 || len(p) > t.max
+		t.buf = append(t.buf[:0], p[len(p)-t.max:]...)
+		t.start = 0
+		return
+	}
+	if n := min(t.max-len(t.buf), len(p)); n > 0 {
+		t.buf = append(t.buf, p[:n]...)
+		p = p[n:]
+	}
+	for len(p) > 0 { // full: overwrite the oldest bytes
+		t.dropped = true
+		n := copy(t.buf[t.start:], p)
+		p = p[n:]
+		t.start = (t.start + n) % t.max
+	}
+}
+
+// Bytes returns the kept output, oldest first. After older output was dropped it
+// starts at a character boundary.
+func (t *tailBuffer) Bytes() []byte {
+	out := make([]byte, 0, len(t.buf))
+	out = append(append(out, t.buf[t.start:]...), t.buf[:t.start]...)
+	if t.dropped {
+		for i := 0; i < len(out) && i < utf8.UTFMax; i++ {
+			if utf8.RuneStart(out[i]) {
+				return out[i:]
+			}
+		}
+	}
+	return out
 }
 
 type runRequest struct {
@@ -274,7 +348,7 @@ func (h *Hub) postRun(w http.ResponseWriter, r *http.Request, s *store.Session) 
 	}
 	// Runs outlive the request; they stop with the hub.
 	ctx, cancel := context.WithCancel(h.ctx)
-	ar := &activeRun{rec: rec, cancel: cancel, targets: targets, output: make([][]byte, len(targets)), subs: map[chan runEvent]struct{}{}}
+	ar := newActiveRun(rec, cancel, targets)
 	h.mu.Lock()
 	h.runs[rec.ID] = ar
 	h.mu.Unlock()
