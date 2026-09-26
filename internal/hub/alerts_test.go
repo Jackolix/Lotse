@@ -128,8 +128,8 @@ func TestThresholdAlertFiresAndResolves(t *testing.T) {
 	var firing, resolved map[string]any
 	json.Unmarshal([]byte(hook.bodies()[0]), &firing)
 	json.Unmarshal([]byte(hook.bodies()[1]), &resolved)
-	if firing["status"] == resolved["status"] {
-		// Deliveries run concurrently; order them.
+	if firing["status"] != "firing" {
+		// Deliveries run concurrently, so they may arrive in either order.
 		firing, resolved = resolved, firing
 	}
 	if firing["status"] != "firing" || firing["system"] != "web-1" || firing["value"].(float64) != 80 {
