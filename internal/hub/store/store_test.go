@@ -1,7 +1,9 @@
 package store
 
 import (
+	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -91,5 +93,65 @@ func TestPruneAndCascade(t *testing.T) {
 	rows, _ = s.QueryMetrics(sys.ID, Res1, 0, 1<<40)
 	if len(rows) != 0 {
 		t.Fatal("metrics survived system deletion")
+	}
+}
+
+func TestRunListsLeaveOutOutput(t *testing.T) {
+	s := openTest(t)
+	r := &ScriptRun{Name: "x", Shell: "sh", Content: "echo hi", Timeout: 5, Username: "u", StartedAt: 1,
+		Targets: `[{"system_id":1,"status":"pending","output":""}]`}
+	if err := s.CreateRun(r); err != nil {
+		t.Fatal(err)
+	}
+	big := strings.Repeat("x", 100<<10)
+	if err := s.FinishRun(r.ID, 2, `[{"system_id":1,"status":"done","output":"`+big+`"},{"system_id":2,"status":"skipped","output":""}]`); err != nil {
+		t.Fatal(err)
+	}
+	full, _ := s.Run(r.ID)
+	if !strings.Contains(full.Targets, big) || full.Content != "echo hi" {
+		t.Fatal("the run itself lost its output or script")
+	}
+	list, err := s.Runs(10)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("Runs = %v, %v", list, err)
+	}
+	var targets []map[string]any
+	if err := json.Unmarshal([]byte(list[0].Targets), &targets); err != nil {
+		t.Fatalf("summary is not JSON: %v: %s", err, list[0].Targets)
+	}
+	if len(targets) != 2 || targets[0]["status"] != "done" || targets[1]["system_id"] != 2.0 {
+		t.Errorf("summary = %s", list[0].Targets)
+	}
+	if strings.Contains(list[0].Targets, "output") || list[0].Content != "" {
+		t.Errorf("list carries output or script: %+v", list[0])
+	}
+}
+
+// Databases from before the summary column get it filled in when they are opened.
+func TestRunSummaryMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`ALTER TABLE script_runs DROP COLUMN summary; PRAGMA user_version = 4;
+		INSERT INTO script_runs (name, shell, content, timeout, username, started_at, finished_at, targets)
+		VALUES ('old', 'sh', 'true', 5, 'u', 1, 2, '[{"system_id":7,"status":"done","output":"lots of output"}]'),
+		       ('broken', 'sh', 'true', 5, 'u', 1, 2, 'not json')`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	s, err = Open(path)
+	if err != nil {
+		t.Fatalf("migrating: %v", err)
+	}
+	defer s.Close()
+	list, err := s.Runs(10)
+	if err != nil || len(list) != 2 {
+		t.Fatalf("Runs = %v, %v", list, err)
+	}
+	got := map[string]string{list[0].Name: list[0].Targets, list[1].Name: list[1].Targets}
+	if got["old"] != `[{"system_id":7,"status":"done"}]` || got["broken"] != "[]" {
+		t.Errorf("summaries after migration: %v", got)
 	}
 }

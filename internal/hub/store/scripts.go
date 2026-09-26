@@ -19,7 +19,8 @@ type Script struct {
 }
 
 // ScriptRun is one execution of a script (or one-off command) on a set of systems.
-// Targets holds the JSON results per system; FinishedAt is nil while it runs.
+// Targets holds the JSON results per system; FinishedAt is nil while it runs. The
+// store also keeps the results without their output, which lists read instead.
 type ScriptRun struct {
 	ID         int64  `json:"id"`
 	ScriptID   *int64 `json:"script_id"`
@@ -94,6 +95,15 @@ func (s *Store) DeleteScript(id int64) error {
 
 const runCols = "id, script_id, name, shell, content, timeout, username, started_at, finished_at, targets"
 
+// runSummaryCols are runCols for lists: no script, and results without output.
+const runSummaryCols = "id, script_id, name, shell, '', timeout, username, started_at, finished_at, summary"
+
+// targetsSummary is SQL for the results in the JSON array arg, without each
+// system's output (up to 128 KiB each).
+func targetsSummary(arg string) string {
+	return "(SELECT json_group_array(json_remove(value, '$.output')) FROM json_each(" + arg + "))"
+}
+
 func scanRun(row interface{ Scan(...any) error }) (*ScriptRun, error) {
 	r := &ScriptRun{}
 	var finished sql.NullInt64
@@ -105,8 +115,9 @@ func scanRun(row interface{ Scan(...any) error }) (*ScriptRun, error) {
 }
 
 func (s *Store) CreateRun(r *ScriptRun) error {
-	res, err := s.db.Exec(`INSERT INTO script_runs (script_id, name, shell, content, timeout, username, started_at, targets)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, r.ScriptID, r.Name, r.Shell, r.Content, r.Timeout, r.Username, r.StartedAt, r.Targets)
+	res, err := s.db.Exec(`INSERT INTO script_runs (script_id, name, shell, content, timeout, username, started_at, targets, summary)
+		VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, `+targetsSummary("?8")+`)`,
+		r.ScriptID, r.Name, r.Shell, r.Content, r.Timeout, r.Username, r.StartedAt, r.Targets)
 	if err != nil {
 		return err
 	}
@@ -116,7 +127,8 @@ func (s *Store) CreateRun(r *ScriptRun) error {
 
 // FinishRun stores the final results of a run.
 func (s *Store) FinishRun(id, finishedAt int64, targets string) error {
-	_, err := s.db.Exec("UPDATE script_runs SET finished_at = ?, targets = ? WHERE id = ?", finishedAt, targets, id)
+	_, err := s.db.Exec("UPDATE script_runs SET finished_at = ?1, targets = ?2, summary = "+targetsSummary("?2")+" WHERE id = ?3",
+		finishedAt, targets, id)
 	return err
 }
 
@@ -124,9 +136,10 @@ func (s *Store) Run(id int64) (*ScriptRun, error) {
 	return scanRun(s.db.QueryRow("SELECT "+runCols+" FROM script_runs WHERE id = ?", id))
 }
 
-// Runs returns the newest runs, newest first.
+// Runs returns the newest runs, newest first, for a list: without the script, and
+// with each system's result but not its output.
 func (s *Store) Runs(limit int) ([]*ScriptRun, error) {
-	rows, err := s.db.Query("SELECT "+runCols+" FROM script_runs ORDER BY id DESC LIMIT ?", limit)
+	rows, err := s.db.Query("SELECT "+runSummaryCols+" FROM script_runs ORDER BY id DESC LIMIT ?", limit)
 	if err != nil {
 		return nil, err
 	}

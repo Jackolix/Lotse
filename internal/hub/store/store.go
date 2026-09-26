@@ -180,6 +180,10 @@ CREATE TABLE script_runs (
 	targets     TEXT NOT NULL DEFAULT '[]' -- JSON, one result per system
 );
 CREATE INDEX script_runs_started ON script_runs (started_at);
+`, `
+-- Run lists read the results without each system's output (up to 128 KiB each).
+ALTER TABLE script_runs ADD COLUMN summary TEXT NOT NULL DEFAULT '[]';
+UPDATE script_runs SET summary = ` + targetsSummary("targets") + ` WHERE json_valid(targets);
 `}
 
 func (s *Store) migrate() error {
