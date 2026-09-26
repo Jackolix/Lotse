@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/user"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/aymanbagabas/go-pty"
@@ -142,6 +143,15 @@ type shell struct {
 	pty  pty.Pty
 	cmd  *pty.Cmd
 	path string
+
+	// run and kill both close the terminal, possibly at once (the hub closes the
+	// channel while the shell exits); go-pty's Close is not safe for that.
+	closeOnce sync.Once
+	exited    chan struct{} // closed once Wait returned
+}
+
+func (s *shell) closePTY() {
+	s.closeOnce.Do(func() { _ = s.pty.Close() })
 }
 
 func startShell(req *protocol.PtyRequest) (*shell, error) {
@@ -165,7 +175,7 @@ func startShell(req *protocol.PtyRequest) (*shell, error) {
 	if u, ok := p.(pty.UnixPty); ok {
 		u.Slave().Close()
 	}
-	return &shell{pty: p, cmd: cmd, path: path}, nil
+	return &shell{pty: p, cmd: cmd, path: path, exited: make(chan struct{})}, nil
 }
 
 // run connects the shell to the channel until the shell exits and returns its exit status.
@@ -178,13 +188,14 @@ func (s *shell) run(ch ssh.Channel) uint32 {
 	}()
 
 	err := s.cmd.Wait()
+	close(s.exited)
 	// Let the last output drain, then close the terminal. Background jobs that still
 	// hold it open do not keep the session alive.
 	select {
 	case <-output:
 	case <-time.After(300 * time.Millisecond):
 	}
-	s.pty.Close()
+	s.closePTY()
 	<-output
 
 	if s.cmd.ProcessState != nil {
@@ -203,10 +214,12 @@ func (s *shell) resize(cols, rows uint32) {
 // kill ends the shell when the hub side went away. Closing the terminal hangs up
 // the shell's process group; the explicit kill covers shells that ignore SIGHUP.
 func (s *shell) kill() {
-	if s.cmd.ProcessState == nil && s.cmd.Process != nil {
-		_ = s.cmd.Process.Kill()
+	select {
+	case <-s.exited:
+	default:
+		_ = s.cmd.Process.Kill() // Start succeeded, so Process is set
 	}
-	_ = s.pty.Close()
+	s.closePTY()
 }
 
 func dim(v uint32, def int) int {
