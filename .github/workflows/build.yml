@@ -14,7 +14,8 @@ permissions:
   contents: read
 
 # Actions are pinned to commit SHAs (the tag is in the comment): a moved tag cannot
-# swap in code that sees the signing key or the package token.
+# swap in code that sees the signing key or the package token. Dependabot
+# (.github/dependabot.yml) keeps the pins current.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

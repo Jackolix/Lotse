@@ -1,0 +1,36 @@
+# Weekly dependency updates, grouped into one pull request per ecosystem so they
+# arrive as a handful of PRs rather than dozens. CI tests every one of them.
+version: 2
+updates:
+  # Actions are pinned to commit SHAs; Dependabot moves the SHA and the version
+  # comment together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go:
+        patterns: ["*"]
+
+  # Major versions (Svelte, Vite, Tailwind, ...) come as separate PRs, since they
+  # can need code changes.
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    groups:
+      web:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+# The Dockerfile's base images are left out: their tags (node:24-alpine,
+# golang:1.27-alpine) already pull patch releases on every build, and moving to a
+# new Node LTS or Go release is a deliberate change together with go.mod and CI.
