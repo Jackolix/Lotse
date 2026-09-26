@@ -126,6 +126,18 @@ func (h *Hub) serveAgent(ctx context.Context, conn net.Conn, remote string) erro
 	ac := &agentConn{id: sys.ID, name: sys.Name, conn: sc, remote: remote, info: hello.Info, features: hello.Features}
 	interval := h.register(ac)
 	defer h.unregister(ac)
+	// The system may have been deleted since admit looked it up. deleteSystem removes
+	// the row before it drops the system's link, so either it saw this agent
+	// registered and closes it, or the row is gone by now.
+	if _, err := h.store.System(sys.ID); errors.Is(err, store.ErrNotFound) {
+		h.mu.Lock()
+		if h.agents[ac.id] == ac {
+			delete(h.agents, ac.id)
+		}
+		h.mu.Unlock()
+		protocol.Reply(req, false, protocol.HelloReply{Error: "this system was deleted on the hub; enroll it again"})
+		return errors.New("refused: the system was deleted")
+	}
 	protocol.Reply(req, true, protocol.HelloReply{OK: true, Interval: interval})
 	h.log.Info("agent connected", "system", sys.Name, "id", sys.ID, "remote", remote, "agent_version", hello.AgentVersion, "features", hello.Features)
 

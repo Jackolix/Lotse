@@ -238,6 +238,12 @@ func (h *Hub) deleteSystem(w http.ResponseWriter, r *http.Request, s *store.Sess
 	if !ok {
 		return
 	}
+	// The row goes first: an agent reconnecting before its link is dropped then
+	// finds no system (see serveAgent) and cannot rejoin without a new token.
+	if err := h.store.DeleteSystem(sys.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+		h.internalError(w, err)
+		return
+	}
 	h.mu.Lock()
 	ac := h.agents[sys.ID]
 	delete(h.agents, sys.ID)
@@ -245,10 +251,6 @@ func (h *Hub) deleteSystem(w http.ResponseWriter, r *http.Request, s *store.Sess
 	h.mu.Unlock()
 	if ac != nil {
 		ac.conn.Close()
-	}
-	if err := h.store.DeleteSystem(sys.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
-		h.internalError(w, err)
-		return
 	}
 	h.resetAlerts(0, sys.ID)
 	h.log.Info("system deleted", "system", sys.Name, "id", sys.ID, "by", s.Username)

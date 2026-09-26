@@ -379,6 +379,18 @@ func TestTruncateKeepsCharactersWhole(t *testing.T) {
 	}
 }
 
+// A sample still in flight when a system is deleted must not bring its state back.
+func TestSamplesOfDeletedSystemsAreDropped(t *testing.T) {
+	h, _ := newTestHub(t)
+	h.record(42, &protocol.Metrics{CPU: 50})
+	h.mu.Lock()
+	_, ok := h.states[42]
+	h.mu.Unlock()
+	if ok {
+		t.Fatal("a sample for a system without an agent created state")
+	}
+}
+
 // metricValues must follow store.MetricCols, whose names are the Metrics JSON keys.
 func TestMetricValuesOrder(t *testing.T) {
 	m := protocol.Metrics{CPU: 1, MemUsed: 2, MemTotal: 3, SwapUsed: 4, SwapTotal: 5, DiskUsed: 6, DiskTotal: 7,

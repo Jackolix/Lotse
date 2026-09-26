@@ -37,9 +37,15 @@ func metricValues(m *protocol.Metrics) [store.NumMetricCols]float64 {
 	}
 }
 
-func (h *Hub) state(id int64) *sysState {
+// liveState returns the state of a connected system, created with its first sample.
+// It is nil once the system was deleted, so a sample still in flight then cannot
+// bring the state back.
+func (h *Hub) liveState(id int64) *sysState {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.agents[id] == nil {
+		return nil
+	}
 	st := h.states[id]
 	if st == nil {
 		st = &sysState{}
@@ -59,7 +65,10 @@ type metricsEvent struct {
 func (h *Hub) record(id int64, m *protocol.Metrics) {
 	now := time.Now().Unix()
 	minute := now / 60 * 60
-	st := h.state(id)
+	st := h.liveState(id)
+	if st == nil {
+		return
+	}
 
 	st.mu.Lock()
 	var done *store.MetricRow
