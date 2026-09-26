@@ -7,6 +7,7 @@ import (
 	stdnet "net"
 	"os"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -29,6 +30,7 @@ const maxFilesystems = 32
 type Collector struct {
 	primaryMount string
 	docker       docker
+	fs           *fsProbe
 
 	prevTime time.Time
 	prevCPU  *cpu.TimesStat
@@ -39,7 +41,7 @@ type Collector struct {
 type counters struct{ a, b uint64 }
 
 func New() *Collector {
-	c := &Collector{primaryMount: primaryMount()}
+	c := &Collector{primaryMount: primaryMount(), fs: newFSProbe()}
 	c.Sample() // establish baselines so the first real sample has rates
 	return c
 }
@@ -176,20 +178,21 @@ func rate(prev, cur uint64, seconds float64) float64 {
 }
 
 func (c *Collector) filesystems() []protocol.Filesystem {
-	// Partitions may return partial results together with warnings; use whatever it found.
-	parts, _ := disk.Partitions(false)
+	parts := slices.Clone(c.fs.partitions())
 	// The primary mount goes first so it wins the de-duplication below.
 	sort.SliceStable(parts, func(i, j int) bool {
 		return parts[i].Mountpoint == c.primaryMount && parts[j].Mountpoint != c.primaryMount
 	})
 	seen := map[string]bool{}
+	mounts := map[string]bool{}
 	var out []protocol.Filesystem
 	for _, p := range parts {
 		if p.Mountpoint == "" || seen[p.Device] || !keepFilesystem(p) {
 			continue
 		}
-		u, err := disk.Usage(p.Mountpoint)
-		if err != nil || u.Total == 0 {
+		mounts[p.Mountpoint] = true
+		u := c.fs.usage(p.Mountpoint)
+		if u == nil || u.Total == 0 {
 			continue
 		}
 		// APFS volumes in one container (/, /Volumes/Recovery, ...) report the same
@@ -210,6 +213,7 @@ func (c *Collector) filesystems() []protocol.Filesystem {
 		}
 		out = append(out, protocol.Filesystem{Mount: p.Mountpoint, Device: p.Device, Type: p.Fstype, Used: used, Total: u.Total})
 	}
+	c.fs.forget(mounts)
 	sort.Slice(out, func(i, j int) bool {
 		if (out[i].Mount == c.primaryMount) != (out[j].Mount == c.primaryMount) {
 			return out[i].Mount == c.primaryMount
