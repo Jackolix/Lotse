@@ -167,3 +167,30 @@ func TestUserManagement(t *testing.T) {
 		t.Errorf("a demoted admin could still delete users: %d", status)
 	}
 }
+
+// A passkey an intruder added survives a new password; admins can remove it.
+func TestAdminRemovesPasskeys(t *testing.T) {
+	h, srv := newTestHub(t)
+	admin, _ := sessionFor(t, h, "ada", store.RoleAdmin, true)
+	bob, bobUser := sessionFor(t, h, "bob", store.RoleOperator, false)
+	key := &store.Passkey{UserID: bobUser.ID, Name: "intruder", RPID: "localhost", CredentialID: []byte("cred"),
+		PublicKey: []byte("key"), Algorithm: algES256}
+	if err := h.store.CreatePasskey(key); err != nil {
+		t.Fatal(err)
+	}
+
+	url := fmt.Sprintf("%s/api/users/%d", srv.URL, bobUser.ID)
+	if status, body := call(t, "PATCH", url, admin, map[string]bool{"reset_passkeys": true}); status != http.StatusNoContent {
+		t.Fatalf("removing passkeys = %d %v", status, body)
+	}
+	if keys, _ := h.store.Passkeys(bobUser.ID); len(keys) != 0 {
+		t.Errorf("%d passkeys left", len(keys))
+	}
+	if status, _ := call(t, "GET", srv.URL+"/api/me", bob, nil); status != http.StatusUnauthorized {
+		t.Errorf("a session survived removing the passkeys: %d", status)
+	}
+	entries, _ := h.store.Audit(0, 10)
+	if len(entries) == 0 || entries[0].Action != "user_changed" || !strings.Contains(entries[0].Detail, "1 passkey(s) removed") {
+		t.Errorf("audit log: %+v", entries)
+	}
+}

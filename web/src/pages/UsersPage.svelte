@@ -78,7 +78,7 @@
     }
   }
 
-  async function change(u: Account, what: { role?: Role; reset_totp?: boolean }, message: string) {
+  async function change(u: Account, what: { role?: Role; reset_totp?: boolean; reset_passkeys?: boolean }, message: string) {
     try {
       if (!(await withReauth(reason, () => api.updateUser(u.id, what).then(() => true)))) return
       toast(message, 'success')
@@ -121,6 +121,20 @@
     if (ok) await change(u, { reset_totp: true }, `Two-factor login turned off for ${u.username}`)
   }
 
+  async function resetPasskeys(u: Account) {
+    const self = u.id === auth.user?.id
+    const ok = await confirmAction({
+      title: `Remove the passkeys of ${u.username}?`,
+      message:
+        'Use this if someone else may have added one. ' +
+        (self ? 'You are signed out everywhere else.' : 'They are signed out everywhere.') +
+        ' The password stays the same.',
+      confirmLabel: 'Remove',
+      danger: true,
+    })
+    if (ok) await change(u, { reset_passkeys: true }, `Passkeys of ${u.username} removed`)
+  }
+
   async function remove(u: Account) {
     const ok = await confirmAction({
       title: `Delete ${u.username}?`,
@@ -146,6 +160,13 @@
       disabled: !u.totp,
       hint: 'Two-factor login is off',
       action: () => resetTOTP(u),
+    },
+    {
+      label: 'Remove passkeys…',
+      icon: 'trash',
+      disabled: !u.passkeys,
+      hint: 'No passkeys',
+      action: () => resetPasskeys(u),
     },
     'separator',
     {

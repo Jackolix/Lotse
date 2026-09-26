@@ -126,6 +126,15 @@ func (s *Store) DeletePasskey(id, userID int64) (*Passkey, error) {
 	return p, affected(res, err)
 }
 
+// DeletePasskeysOf removes all passkeys of a user and returns how many there were.
+func (s *Store) DeletePasskeysOf(userID int64) (int64, error) {
+	res, err := s.db.Exec("DELETE FROM passkeys WHERE user_id = ?", userID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // UserByPasskeyHandle finds the account a discoverable credential belongs to.
 func (s *Store) UserByPasskeyHandle(handle []byte) (*User, error) {
 	if len(handle) == 0 {

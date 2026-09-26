@@ -319,7 +319,8 @@ Administrators add accounts under **Users** and give each a role:
 The hub checks every request against the role; the UI only hides what a role can't use. Changing someone's password
 signs them out everywhere and closes their terminals. Taking away a user's operator rights closes their open
 terminals and file transfers. The last administrator cannot be removed or demoted. An administrator can also turn
-off two-factor login for a user who lost their authenticator.
+off two-factor login for a user who lost their authenticator, and remove a user's passkeys (which signs them out),
+e.g. when someone else may have added one to the account.
 
 ## Passkeys
 

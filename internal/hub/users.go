@@ -82,17 +82,19 @@ func (h *Hub) postUser(w http.ResponseWriter, r *http.Request, s *store.Session)
 	writeJSON(w, http.StatusOK, userDTO{ID: u.ID, Username: u.Username, Role: u.Role, CreatedAt: u.CreatedAt})
 }
 
-// patchUser changes a role, sets a new password or turns off two-factor login for
-// someone who lost their authenticator.
+// patchUser changes a role, sets a new password, turns off two-factor login for
+// someone who lost their authenticator, or removes passkeys, e.g. one an intruder
+// added to the account.
 func (h *Hub) patchUser(w http.ResponseWriter, r *http.Request, s *store.Session) {
 	u, ok := h.lookupUser(w, r)
 	if !ok {
 		return
 	}
 	var body struct {
-		Role      string `json:"role"`
-		Password  string `json:"password"`
-		ResetTOTP bool   `json:"reset_totp"`
+		Role          string `json:"role"`
+		Password      string `json:"password"`
+		ResetTOTP     bool   `json:"reset_totp"`
+		ResetPasskeys bool   `json:"reset_passkeys"`
 	}
 	if !readJSON(w, r, &body) {
 		return
@@ -110,6 +112,14 @@ func (h *Hub) patchUser(w http.ResponseWriter, r *http.Request, s *store.Session
 			return
 		}
 	}
+
+	// Whoever signed in with an old password or a removed passkey is signed out,
+	// except the admin making the change.
+	keep := []byte(nil)
+	if u.ID == s.ID {
+		keep = s.TokenHash
+	}
+	signOut := false
 
 	var changes []string
 	if body.Role != "" && body.Role != u.Role {
@@ -130,14 +140,7 @@ func (h *Hub) patchUser(w http.ResponseWriter, r *http.Request, s *store.Session
 			h.internalError(w, err)
 			return
 		}
-		// Whoever knew the old password is signed out, except the admin making the change.
-		keep := []byte(nil)
-		if u.ID == s.ID {
-			keep = s.TokenHash
-		}
-		if err := h.signOutUser(u.ID, keep); err != nil {
-			h.log.Error("ending sessions failed", "err", err)
-		}
+		signOut = true
 		changes = append(changes, "new password")
 	}
 	if body.ResetTOTP && u.TOTPSecret != "" {
@@ -146,6 +149,22 @@ func (h *Hub) patchUser(w http.ResponseWriter, r *http.Request, s *store.Session
 			return
 		}
 		changes = append(changes, "two-factor login turned off")
+	}
+	if body.ResetPasskeys {
+		n, err := h.store.DeletePasskeysOf(u.ID)
+		if err != nil {
+			h.internalError(w, err)
+			return
+		}
+		if n > 0 {
+			signOut = true
+			changes = append(changes, fmt.Sprintf("%d passkey(s) removed", n))
+		}
+	}
+	if signOut {
+		if err := h.signOutUser(u.ID, keep); err != nil {
+			h.log.Error("ending sessions failed", "err", err)
+		}
 	}
 	if len(changes) > 0 {
 		h.audit(r, s.Username, "user_changed", nil, u.Username+": "+strings.Join(changes, ", "))

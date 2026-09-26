@@ -374,7 +374,7 @@ export const api = {
   users: () => request<Account[]>('GET', '/api/users'),
   createUser: (username: string, password: string, role: Role) =>
     request<Account>('POST', '/api/users', { username, password, role }),
-  updateUser: (id: number, change: { role?: Role; password?: string; reset_totp?: boolean }) =>
+  updateUser: (id: number, change: { role?: Role; password?: string; reset_totp?: boolean; reset_passkeys?: boolean }) =>
     request<void>('PATCH', `/api/users/${id}`, change),
   deleteUser: (id: number) => request<void>('DELETE', `/api/users/${id}`),
   scripts: () => request<Script[]>('GET', '/api/scripts'),
