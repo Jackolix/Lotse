@@ -20,7 +20,8 @@ func checkServiceAction(name, action string, own ...string) error {
 	default:
 		return fmt.Errorf("unknown action %q", action)
 	}
-	if name == "" || len(name) > 256 || strings.HasPrefix(name, "-") || strings.ContainsAny(name, "\x00\r\n/\\") {
+	// No glob characters: systemctl would apply the action to every matching unit.
+	if name == "" || len(name) > 256 || strings.HasPrefix(name, "-") || strings.ContainsAny(name, "\x00\r\n/\\*?[]") {
 		return errors.New("invalid service name")
 	}
 	for _, o := range own {

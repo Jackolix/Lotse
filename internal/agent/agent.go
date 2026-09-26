@@ -290,7 +290,8 @@ func (a *Agent) handleRequests(reqs <-chan *ssh.Request, intervals chan time.Dur
 				})
 			}
 		case protocol.ReqServices:
-			go protocol.Reply(req, true, listServices())
+			// Listing can take a while (hundreds of Windows services); don't hold up other requests.
+			go func() { protocol.Reply(req, true, listServices()) }()
 		case protocol.ReqService:
 			var msg protocol.ServiceMsg
 			if err := json.Unmarshal(req.Payload, &msg); err != nil {

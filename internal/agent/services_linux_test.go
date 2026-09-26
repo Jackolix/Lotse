@@ -41,6 +41,9 @@ func TestServiceActionsAreValidated(t *testing.T) {
 		{"../etc/passwd", "stop"},
 		{"lotse-agent", "stop"},
 		{"", "start"},
+		{"*", "stop"}, // would stop every loaded service, the agent included
+		{"lotse-agen?", "stop"},
+		{"ssh[d]", "restart"},
 	} {
 		if err := checkServiceAction(tc.name, tc.action, "lotse-agent"); err == nil {
 			t.Errorf("%s %q was accepted", tc.action, tc.name)
