@@ -235,7 +235,10 @@ type User struct {
 }
 
 // Can reports whether the user's role includes role.
-func (u *User) Can(role string) bool { return roleRank[u.Role] >= roleRank[role] }
+func (u *User) Can(role string) bool { return RoleIncludes(u.Role, role) }
+
+// RoleIncludes reports whether role grants everything need does.
+func RoleIncludes(role, need string) bool { return roleRank[role] >= roleRank[need] }
 
 // Session is a logged-in browser. ElevatedUntil marks a recent re-authentication,
 // which sensitive actions such as opening a shell require.

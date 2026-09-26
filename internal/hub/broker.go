@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -65,11 +66,16 @@ func (b *broker) publish(event string, data any) {
 
 // handleEvents streams events to the browser: "metrics" for every sample, "status"
 // when an agent connects or disconnects, "systems" when the list changed.
-func (h *Hub) handleEvents(w http.ResponseWriter, r *http.Request, _ *store.Session) {
+func (h *Hub) handleEvents(w http.ResponseWriter, r *http.Request, s *store.Session) {
 	rc := http.NewResponseController(w)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no") // nginx: do not buffer the stream
+
+	// Signing out or losing the account ends the stream.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	defer h.track(s, store.RoleViewer, cancel)()
 
 	ch, unsubscribe := h.broker.subscribe()
 	defer unsubscribe()
@@ -84,7 +90,7 @@ func (h *Hub) handleEvents(w http.ResponseWriter, r *http.Request, _ *store.Sess
 	defer ping.Stop()
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case msg := <-ch:
 			if _, err := w.Write(msg); err != nil {

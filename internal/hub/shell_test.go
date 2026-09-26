@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -140,4 +141,82 @@ func TestShellRejectsCrossOriginBrowsers(t *testing.T) {
 	if resp != nil && resp.StatusCode != http.StatusForbidden {
 		t.Errorf("status = %d, want 403", resp.StatusCode)
 	}
+}
+
+// openEvents opens the browser's event stream and waits for its first line.
+func openEvents(t *testing.T, ctx context.Context, srvURL, cookie string) *http.Response {
+	t.Helper()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srvURL+"/api/events", nil)
+	req.Header.Set("Cookie", "session="+cookie)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { resp.Body.Close() })
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("event stream = %d", resp.StatusCode)
+	}
+	line, err := bufio.NewReader(resp.Body).ReadString('\n')
+	if err != nil || !strings.HasPrefix(line, ": connected") {
+		t.Fatalf("event stream started with %q, %v", line, err)
+	}
+	return resp
+}
+
+// waitClosed fails unless the stream ends before ctx does.
+func waitClosed(t *testing.T, ctx context.Context, what string, read func() error) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		for read() == nil {
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatalf("%s stayed open", what)
+	}
+}
+
+// Changing the password signs out other sessions, and whatever they had open with
+// it: a stolen session's root shell must not outlive the password change.
+func TestPasswordChangeEndsOtherSessionsConnections(t *testing.T) {
+	h, srv := newTestHub(t)
+	sys := enroll(t, h, srv, true)
+	stolen, _ := newSession(t, h, true)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	ws := openTerminal(t, ctx, srv.URL, sys.ID, stolen)
+	var out strings.Builder
+	if m := readControl(t, ctx, ws, &out); m.Type != "ready" {
+		t.Fatalf("first message = %+v, want ready", m)
+	}
+	events := openEvents(t, ctx, srv.URL, stolen)
+
+	mine, _ := newSession(t, h, true)
+	status, body := call(t, "POST", srv.URL+"/api/me/password", mine, map[string]string{"current": testPassword, "new": "a brand new password"})
+	if status != http.StatusNoContent {
+		t.Fatalf("password change = %d %v", status, body)
+	}
+	waitClosed(t, ctx, "the other session's terminal", func() error { _, _, err := ws.Read(ctx); return err })
+	waitClosed(t, ctx, "the other session's event stream", func() error { _, err := events.Body.Read(make([]byte, 512)); return err })
+
+	// The session that made the change keeps working.
+	if status, _ := call(t, "GET", srv.URL+"/api/me", mine, nil); status != http.StatusOK {
+		t.Errorf("own session after password change = %d", status)
+	}
+}
+
+func TestLogoutEndsEventStream(t *testing.T) {
+	h, srv := newTestHub(t)
+	cookie, _ := newSession(t, h, false)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	events := openEvents(t, ctx, srv.URL, cookie)
+	if status, _ := call(t, "POST", srv.URL+"/api/logout", cookie, nil); status != http.StatusNoContent {
+		t.Fatalf("logout = %d", status)
+	}
+	waitClosed(t, ctx, "the event stream", func() error { _, err := events.Body.Read(make([]byte, 512)); return err })
 }

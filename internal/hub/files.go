@@ -11,6 +11,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/sftp"
@@ -64,7 +65,11 @@ func (h *Hub) fileSession(w http.ResponseWriter, r *http.Request, s *store.Sessi
 		writeError(w, http.StatusBadGateway, "the agent could not start file access")
 		return nil, nil, nil, false
 	}
-	return sys, client, func() { client.Close(); ch.Close() }, true
+	// Signing out or losing the operator role aborts a transfer in progress.
+	var once sync.Once
+	stop := func() { once.Do(func() { client.Close(); ch.Close() }) }
+	untrack := h.track(s, store.RoleOperator, stop)
+	return sys, client, func() { untrack(); stop() }, true
 }
 
 func channelError(err error) string {

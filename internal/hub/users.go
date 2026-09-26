@@ -118,9 +118,7 @@ func (h *Hub) patchUser(w http.ResponseWriter, r *http.Request, s *store.Session
 			return
 		}
 		changes = append(changes, fmt.Sprintf("role %s → %s", u.Role, body.Role))
-		if body.Role == store.RoleViewer {
-			h.closeUserShells(u.ID)
-		}
+		h.closeConnsBeyondRole(u.ID, body.Role)
 	}
 	if body.Password != "" {
 		hash, err := bcrypt.GenerateFromPassword([]byte(body.Password), bcryptCost)
@@ -132,14 +130,12 @@ func (h *Hub) patchUser(w http.ResponseWriter, r *http.Request, s *store.Session
 			h.internalError(w, err)
 			return
 		}
-		// Whoever knew the old password is signed out, unless it is the admin themselves.
+		// Whoever knew the old password is signed out, except the admin making the change.
+		keep := []byte(nil)
 		if u.ID == s.ID {
-			err = h.store.DeleteOtherSessions(u.ID, s.TokenHash)
-		} else {
-			err = h.store.DeleteSessions(u.ID)
-			h.closeUserShells(u.ID)
+			keep = s.TokenHash
 		}
-		if err != nil {
+		if err := h.signOutUser(u.ID, keep); err != nil {
 			h.log.Error("ending sessions failed", "err", err)
 		}
 		changes = append(changes, "new password")
@@ -173,7 +169,7 @@ func (h *Hub) deleteUser(w http.ResponseWriter, r *http.Request, s *store.Sessio
 		h.userError(w, err)
 		return
 	}
-	h.closeUserShells(u.ID)
+	h.closeConns(func(c *sessionConn) bool { return c.userID == u.ID })
 	h.audit(r, s.Username, "user_deleted", nil, u.Username)
 	w.WriteHeader(http.StatusNoContent)
 }

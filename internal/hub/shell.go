@@ -1,7 +1,6 @@
 package hub
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,34 +18,6 @@ import (
 	"github.com/Jackolix/Lotse/internal/hub/store"
 	"github.com/Jackolix/Lotse/internal/protocol"
 )
-
-// shellSession is an open browser terminal, tracked so logging out ends it.
-type shellSession struct {
-	session []byte // token hash of the browser session
-	userID  int64
-	cancel  context.CancelFunc
-}
-
-func (h *Hub) closeShells(sessionHash []byte) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for sh := range h.shells {
-		if bytes.Equal(sh.session, sessionHash) {
-			sh.cancel()
-		}
-	}
-}
-
-// closeUserShells ends every shell of a user who was deleted, demoted or signed out.
-func (h *Hub) closeUserShells(userID int64) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for sh := range h.shells {
-		if sh.userID == userID {
-			sh.cancel()
-		}
-	}
-}
 
 // termMsg is the JSON control message on the terminal WebSocket. Terminal data
 // itself travels as binary messages in both directions.
@@ -138,15 +109,7 @@ func (h *Hub) handleShell(w http.ResponseWriter, r *http.Request, s *store.Sessi
 		return
 	}
 
-	sh := &shellSession{session: s.TokenHash, userID: s.ID, cancel: cancel}
-	h.mu.Lock()
-	h.shells[sh] = struct{}{}
-	h.mu.Unlock()
-	defer func() {
-		h.mu.Lock()
-		delete(h.shells, sh)
-		h.mu.Unlock()
-	}()
+	defer h.track(s, store.RoleOperator, cancel)()
 
 	start := time.Now()
 	h.audit(r, s.Username, "shell_opened", sys, "")

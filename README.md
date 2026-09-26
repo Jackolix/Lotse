@@ -291,7 +291,7 @@ How it is protected:
   instead). That unlocks them for 10 minutes, like `sudo`.
 - **Audit.** Shells (with user, source IP, duration, bytes and exit status), uploads, downloads, file changes,
   script runs, service actions and reboots are logged under **Activity**. Keystrokes and file contents are not
-  recorded. Signing out closes your open shells.
+  recorded. Signing out closes your open shells and file transfers.
 
 ## Scripts
 
@@ -317,9 +317,9 @@ Administrators add accounts under **Users** and give each a role:
 | Administrator | Also manage users, add and delete systems, edit alert rules and channels, update agents; see all activity |
 
 The hub checks every request against the role; the UI only hides what a role can't use. Changing someone's password
-signs them out everywhere. Taking away a user's operator rights closes their open terminals. The last administrator
-cannot be removed or demoted. An administrator can also turn off two-factor login for a user who lost their
-authenticator.
+signs them out everywhere and closes their terminals. Taking away a user's operator rights closes their open
+terminals and file transfers. The last administrator cannot be removed or demoted. An administrator can also turn
+off two-factor login for a user who lost their authenticator.
 
 ## Passkeys
 
@@ -389,7 +389,7 @@ Ethernet.
   cannot get around the limit, and a successful sign-in does not reset it.
 - Every API route requires a role (viewer, operator, administrator). Terminals, files, scripts, process and service
   control, reboots and user changes also need a re-authentication within the last 10 minutes. Changing your password
-  signs out all other sessions.
+  signs out all other sessions and closes their terminals.
 - The activity log records sign-ins (including failed ones), password confirmations, shells, file transfers and
   changes, script runs, service actions, reboots, Wake-on-LAN, agent updates and changes to systems and users. It is
   kept for a year.

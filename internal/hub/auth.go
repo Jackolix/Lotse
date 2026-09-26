@@ -262,7 +262,7 @@ func (h *Hub) postLogout(w http.ResponseWriter, r *http.Request) {
 		if s, err := h.store.Session(hash); err == nil {
 			h.audit(r, s.Username, "logout", nil, "")
 		}
-		h.closeShells(hash)
+		h.closeSessionConns(hash)
 		if err := h.store.DeleteSession(hash); err != nil {
 			h.log.Error("deleting session failed", "err", err)
 		}
@@ -349,8 +349,8 @@ func (h *Hub) postPassword(w http.ResponseWriter, r *http.Request, s *store.Sess
 		h.internalError(w, err)
 		return
 	}
-	// Anyone who knew the old password is logged out.
-	if err := h.store.DeleteOtherSessions(s.ID, s.TokenHash); err != nil {
+	// Anyone who knew the old password is logged out, and their terminals close.
+	if err := h.signOutUser(s.ID, s.TokenHash); err != nil {
 		h.log.Error("ending other sessions failed", "err", err)
 	}
 	h.audit(r, s.Username, "password_changed", nil, "other sessions were logged out")

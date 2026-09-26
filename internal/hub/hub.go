@@ -89,9 +89,9 @@ type Hub struct {
 	mu        sync.Mutex
 	agents    map[int64]*agentConn // connected agents by system ID
 	states    map[int64]*sysState
-	shells    map[*shellSession]struct{}
-	runs      map[int64]*activeRun // script runs in progress
-	live      bool                 // agents currently report at liveInterval
+	conns     map[*sessionConn]struct{} // terminals, file transfers and event streams
+	runs      map[int64]*activeRun      // script runs in progress
+	live      bool                      // agents currently report at liveInterval
 	idleTimer *time.Timer
 }
 
@@ -115,7 +115,7 @@ func New(cfg Config, log *slog.Logger) (*Hub, error) {
 		totpUsed: map[int64]int64{},
 		agents:   map[int64]*agentConn{},
 		states:   map[int64]*sysState{},
-		shells:   map[*shellSession]struct{}{},
+		conns:    map[*sessionConn]struct{}{},
 		runs:     map[int64]*activeRun{},
 		alerts:   &alertEngine{states: map[alertKey]*alertState{}, offline: map[int64]time.Time{}, started: time.Now()},
 	}

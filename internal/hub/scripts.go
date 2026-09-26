@@ -496,11 +496,15 @@ func (h *Hub) getRun(w http.ResponseWriter, r *http.Request, _ *store.Session) {
 
 // getRunEvents streams a run as server-sent events: "run" with the full state
 // first, then "target" (status changes), "output" (new output) and "done".
-func (h *Hub) getRunEvents(w http.ResponseWriter, r *http.Request, _ *store.Session) {
+func (h *Hub) getRunEvents(w http.ResponseWriter, r *http.Request, s *store.Session) {
 	rec, ok := h.lookupRun(w, r)
 	if !ok {
 		return
 	}
+	// Signing out or losing the operator role ends the stream.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	defer h.track(s, store.RoleOperator, cancel)()
 	rc := http.NewResponseController(w)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -548,7 +552,7 @@ func (h *Hub) getRunEvents(w http.ResponseWriter, r *http.Request, _ *store.Sess
 	defer ping.Stop()
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case ev, ok := <-ch:
 			if !ok {
