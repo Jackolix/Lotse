@@ -169,8 +169,10 @@ func (h *Hub) serveAgent(ctx context.Context, conn net.Conn, remote string) erro
 			if len(m.Filesystems) > maxFilesystems {
 				m.Filesystems = m.Filesystems[:maxFilesystems]
 			}
-			h.record(sys.ID, &m)
+			// Answer first: the agent drops the link if the reply takes 15 s, and
+			// storing the sample can wait for the database.
 			req.Reply(true, nil)
+			h.record(sys.ID, &m)
 		}
 	}
 }

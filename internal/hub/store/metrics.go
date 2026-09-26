@@ -50,8 +50,11 @@ var (
 		}
 		return "INSERT OR REPLACE INTO metrics (system_id, res, ts, " + colList + ") " +
 			"SELECT system_id, ?, (ts / ?) * ? AS bucket, " + strings.Join(aggs, ", ") +
-			" FROM metrics WHERE res = ? AND ts >= ? AND ts < ? GROUP BY system_id, bucket"
+			" FROM metrics WHERE " + bySystem + " AND res = ? AND ts >= ? AND ts < ? GROUP BY system_id, bucket"
 	}()
+	// bySystem lets queries across all systems use the primary key, which starts
+	// with system_id, instead of scanning the whole table.
+	bySystem = "system_id IN (SELECT id FROM systems)"
 )
 
 func (s *Store) InsertMetrics(systemID int64, res int, row MetricRow) error {
@@ -100,7 +103,7 @@ func (s *Store) Rollup(toRes int, window time.Duration, now time.Time) error {
 // PruneMetrics deletes rows older than their resolution's retention.
 func (s *Store) PruneMetrics(now time.Time) error {
 	for res, keep := range Retention {
-		if _, err := s.db.Exec("DELETE FROM metrics WHERE res = ? AND ts < ?", res, now.Add(-keep).Unix()); err != nil {
+		if _, err := s.db.Exec("DELETE FROM metrics WHERE "+bySystem+" AND res = ? AND ts < ?", res, now.Add(-keep).Unix()); err != nil {
 			return err
 		}
 	}
