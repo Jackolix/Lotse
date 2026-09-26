@@ -7,6 +7,7 @@
   import { confirmAction } from '../lib/dialogs.svelte'
   import { ago, dateTime, durationLabel } from '../lib/format'
   import { openMenu, type MenuEntry } from '../lib/menu.svelte'
+  import { withReauth } from '../lib/reauth.svelte'
   import { link, navigate, param } from '../lib/router.svelte'
   import { shellLabel, statusColor } from '../lib/scripts'
   import { errorText } from '../lib/systemActions'
@@ -69,7 +70,8 @@
     })
     if (!ok) return
     try {
-      await api.deleteScript(s.id)
+      const deleted = await withReauth('Deleting scripts needs your password again.', () => api.deleteScript(s.id).then(() => true))
+      if (!deleted) return
       toast('Script deleted', 'success', 2500)
       await load()
     } catch (err) {

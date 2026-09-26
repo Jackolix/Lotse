@@ -78,9 +78,14 @@ func validateScript(sc *store.Script) string {
 	return ""
 }
 
+// Changing saved scripts needs a fresh confirmation like running them: others run
+// them later, "Run again" even without seeing the new version.
 func (h *Hub) saveScript(w http.ResponseWriter, r *http.Request, s *store.Session) {
 	var sc store.Script
 	if !readJSON(w, r, &sc) {
+		return
+	}
+	if !requireElevated(w, s) {
 		return
 	}
 	sc.ID = 0
@@ -108,6 +113,9 @@ func (h *Hub) saveScript(w http.ResponseWriter, r *http.Request, s *store.Sessio
 }
 
 func (h *Hub) deleteScript(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	if !requireElevated(w, s) {
+		return
+	}
 	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	sc, err := h.store.Script(id)
 	if err != nil {

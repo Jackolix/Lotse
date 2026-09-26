@@ -2,6 +2,7 @@
   import { untrack } from 'svelte'
   import { api, type Script, type ScriptShell } from '../api'
   import { durationLabel } from '../format'
+  import { withReauth } from '../reauth.svelte'
   import { shells, timeouts } from '../scripts'
   import { errorText } from '../systemActions'
   import { toast } from '../toast.svelte'
@@ -40,7 +41,10 @@
     busy = true
     error = ''
     try {
-      const saved = await api.saveScript({ id: script?.id, name, description, shell, timeout, content })
+      const saved = await withReauth('Changing scripts needs your password again.', () =>
+        api.saveScript({ id: script?.id, name, description, shell, timeout, content }),
+      )
+      if (!saved) return
       toast(script?.id ? 'Script saved' : 'Script added', 'success', 2500)
       open = false
       onsaved?.(saved)

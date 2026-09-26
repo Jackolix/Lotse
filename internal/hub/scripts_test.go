@@ -41,19 +41,34 @@ func TestScriptRunsOnSystems(t *testing.T) {
 	sys := enroll(t, h, srv, true)
 	locked := enroll(t, h, srv, false)
 	cookie, _ := sessionFor(t, h, "otto", store.RoleOperator, true)
-
-	status, body := call(t, "POST", srv.URL+"/api/scripts", cookie, map[string]any{
+	plain, _ := sessionFor(t, h, "otto", store.RoleOperator, false)
+	greet := map[string]any{
 		"name": "Greet", "shell": "sh", "timeout": 30,
 		"content": "echo hello-$((6*7))\necho oops >&2\nexit 3\n",
-	})
+	}
+
+	if status, body := call(t, "POST", srv.URL+"/api/scripts", plain, greet); status != http.StatusForbidden || body["reauth_required"] != true {
+		t.Fatalf("save without re-authentication = %d %v", status, body)
+	}
+	status, body := call(t, "POST", srv.URL+"/api/scripts", cookie, greet)
 	if status != http.StatusOK {
 		t.Fatalf("save script = %d %v", status, body)
 	}
 	scriptID := int64(body["id"].(float64))
+	scriptURL := fmt.Sprintf("%s/api/scripts/%d", srv.URL, scriptID)
 
-	plain, _ := sessionFor(t, h, "otto", store.RoleOperator, false)
-	if status, body := call(t, "POST", srv.URL+"/api/runs", plain, map[string]any{"script_id": scriptID, "systems": []int64{sys.ID}}); status != http.StatusForbidden || body["reauth_required"] != true {
-		t.Fatalf("run without re-authentication = %d %v", status, body)
+	// Without re-authentication, a saved script can be neither changed nor run.
+	for _, c := range []struct {
+		method, url string
+		body        any
+	}{
+		{"PUT", scriptURL, greet},
+		{"DELETE", scriptURL, nil},
+		{"POST", srv.URL + "/api/runs", map[string]any{"script_id": scriptID, "systems": []int64{sys.ID}}},
+	} {
+		if status, body := call(t, c.method, c.url, plain, c.body); status != http.StatusForbidden || body["reauth_required"] != true {
+			t.Fatalf("%s %s without re-authentication = %d %v", c.method, c.url, status, body)
+		}
 	}
 	status, body = call(t, "POST", srv.URL+"/api/runs", cookie, map[string]any{"script_id": scriptID, "systems": []int64{sys.ID, locked.ID}})
 	if status != http.StatusOK {
