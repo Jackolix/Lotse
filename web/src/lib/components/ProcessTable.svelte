@@ -4,6 +4,7 @@
   import { confirmAction } from '../dialogs.svelte'
   import { bytes, pct } from '../format'
   import { openMenu, type MenuEntry } from '../menu.svelte'
+  import { rowOrder } from '../rowOrder'
   import { copy } from '../systemActions'
   import { toast } from '../toast.svelte'
   import Icon from './Icon.svelte'
@@ -20,6 +21,7 @@
   let loading = $state(true)
   let query = $state('')
   let sortKey = $state<SortKey>('cpu')
+  let epoch = $state(0)
   let reauth = $state(false)
   let pending: (() => void) | null = null
 
@@ -43,18 +45,25 @@
     return () => clearInterval(timer)
   })
 
+  // Sorting by CPU or memory holds the order between refreshes (see rowOrder), so
+  // rows don't trade places every five seconds while you read them.
+  const by: Record<SortKey, (a: Process, b: Process) => number> = {
+    cpu: (a, b) => b.cpu - a.cpu || b.mem - a.mem || a.pid - b.pid,
+    mem: (a, b) => b.mem - a.mem || a.pid - b.pid,
+    name: (a, b) => a.name.localeCompare(b.name) || a.pid - b.pid,
+    pid: (a, b) => a.pid - b.pid,
+  }
+  const order = rowOrder((p: Process) => p.pid)
+  const ordered = $derived(order(processes, by[sortKey], sortKey === 'cpu' || sortKey === 'mem', epoch))
+  const sortBy = (key: SortKey) => {
+    sortKey = key
+    epoch++
+  }
+
   const rows = $derived.by(() => {
     const q = query.trim().toLowerCase()
-    const list = q
-      ? processes.filter((p) => `${p.pid} ${p.name} ${p.user ?? ''} ${p.cmd ?? ''}`.toLowerCase().includes(q))
-      : [...processes]
-    const by: Record<SortKey, (a: Process, b: Process) => number> = {
-      cpu: (a, b) => b.cpu - a.cpu || b.mem - a.mem,
-      mem: (a, b) => b.mem - a.mem,
-      name: (a, b) => a.name.localeCompare(b.name),
-      pid: (a, b) => a.pid - b.pid,
-    }
-    return list.sort(by[sortKey])
+    if (!q) return ordered.rows
+    return ordered.rows.filter((p) => `${p.pid} ${p.name} ${p.user ?? ''} ${p.cmd ?? ''}`.toLowerCase().includes(q))
   })
 
   async function signal(p: Process, sig: 'terminate' | 'kill') {
@@ -95,16 +104,23 @@
     { label: 'Kill…', icon: 'trash', danger: true, disabled: !canControl, hint, action: () => signal(p, 'kill') },
   ]
 
-  function header(key: SortKey, label: string, right = false) {
-    return { key, label, right }
+  function header(key: SortKey, label: string, width = '', right = false) {
+    return { key, label, width, right }
   }
-  const columns = [header('pid', 'PID'), header('name', 'Process'), header('cpu', 'CPU', true), header('mem', 'Memory', true)]
+  const columns = [header('pid', 'PID', 'w-24'), header('name', 'Process'), header('cpu', 'CPU', 'w-16', true), header('mem', 'Memory', 'w-24', true)]
 </script>
 
 <div class="flex flex-wrap items-center gap-3 px-4 pt-4">
   <h2 class="text-sm font-medium">
     Processes {#if total}<span class="font-normal text-ink-2">· busiest {processes.length} of {total}</span>{/if}
   </h2>
+  {#if ordered.stale}
+    <button
+      class="inline-flex items-center gap-1 text-xs text-ink-2 hover:text-ink"
+      title="Rows keep their place while the numbers update"
+      onclick={() => sortBy(sortKey)}><Icon name="refresh" size={12} /> Sort by {sortKey === 'cpu' ? 'CPU' : 'memory'} again</button
+    >
+  {/if}
   <label class="relative ml-auto block w-full sm:w-56">
     <span class="sr-only">Filter processes</span>
     <Icon name="search" size={14} class="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted" />
@@ -121,8 +137,8 @@
       <thead class="sticky top-0 bg-surface text-left text-xs text-muted">
         <tr>
           {#each columns as c (c.key)}
-            <th class="py-2 font-medium {c.key === 'pid' ? 'px-4' : 'pr-4'} {c.right ? 'text-right' : ''}">
-              <button class="hover:text-ink {sortKey === c.key ? 'text-ink' : ''}" onclick={() => (sortKey = c.key)} aria-pressed={sortKey === c.key}>
+            <th class="py-2 font-medium {c.key === 'pid' ? 'px-4' : 'pr-4'} {c.width} {c.right ? 'text-right' : ''}">
+              <button class="hover:text-ink {sortKey === c.key ? 'text-ink' : ''}" onclick={() => sortBy(c.key)} aria-pressed={sortKey === c.key}>
                 {c.label}{sortKey === c.key ? ' ↓' : ''}
               </button>
             </th>
