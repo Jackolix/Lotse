@@ -2,6 +2,7 @@
   import type uPlot from 'uplot'
   import { untrack } from 'svelte'
   import { api, ApiError, type MetricKey, type Metrics, type RangeKey, type Series } from '../lib/api'
+  import Battery from '../lib/components/Battery.svelte'
   import ChartCard from '../lib/components/ChartCard.svelte'
   import ContainerTable from '../lib/components/ContainerTable.svelte'
   import ProcessTable from '../lib/components/ProcessTable.svelte'
@@ -200,6 +201,7 @@
           <StatusDot online={sys.online} />
           {#if sys.online && m}
             <span>Up {duration(m.uptime)}</span>
+            {#if m.battery}<Battery battery={m.battery} label />{/if}
           {:else}
             <span>Last seen {ago(sys.last_seen)}</span>
           {/if}

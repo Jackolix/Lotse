@@ -42,6 +42,7 @@ Wake-on-LAN, with several users, roles, passkeys, an audit log and signed agent 
 **Watch**
 
 - CPU, memory, swap, disk, disk I/O, network and load, live and for up to a year
+- Battery charge of laptops, next to the machine's name
 - Docker and Podman containers, top processes, systemd, launchd and Windows services
 - Alerts to ntfy, Discord, Slack, Telegram, email or any webhook
 

@@ -147,6 +147,7 @@ func (c *Collector) Sample() protocol.Metrics {
 		}
 	}
 	m.Uptime, _ = host.Uptime()
+	m.Battery = battery()
 	m.Containers = c.docker.containers()
 
 	c.prevTime = now

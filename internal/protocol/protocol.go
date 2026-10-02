@@ -123,8 +123,17 @@ type Metrics struct {
 	Load15    float64 `json:"load15"`
 	Uptime    uint64  `json:"uptime"` // seconds
 
+	Battery     *Battery     `json:"battery,omitempty"` // nil on machines without one
 	Filesystems []Filesystem `json:"fs,omitempty"`
 	Containers  []Container  `json:"containers,omitempty"` // when Docker or Podman runs on the host
+}
+
+// Battery is the machine's internal battery; several are reported as one.
+type Battery struct {
+	Percent float64 `json:"percent"` // 0-100
+	// State is charging, discharging or idle (on external power without charging:
+	// full, or held at a charge limit).
+	State string `json:"state"`
 }
 
 // Container is one Docker/Podman container. Stats are zero unless it is running.

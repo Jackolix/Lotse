@@ -43,8 +43,15 @@ export interface Metrics {
   load5: number
   load15: number
   uptime: number
+  /** Absent on machines without a battery. */
+  battery?: Battery
   fs?: Filesystem[]
   containers?: Container[]
+}
+
+export interface Battery {
+  percent: number
+  state: 'charging' | 'discharging' | 'idle'
 }
 
 export interface Container {
@@ -70,7 +77,7 @@ export interface Process {
   cmd?: string
 }
 
-export type MetricKey = Exclude<keyof Metrics, 'uptime' | 'fs' | 'containers'>
+export type MetricKey = Exclude<keyof Metrics, 'uptime' | 'battery' | 'fs' | 'containers'>
 
 export interface System {
   id: number

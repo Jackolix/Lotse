@@ -1,6 +1,7 @@
 <script lang="ts">
   import { can } from '../lib/auth.svelte'
   import AddSystemDialog from '../lib/components/AddSystemDialog.svelte'
+  import Battery from '../lib/components/Battery.svelte'
   import Icon from '../lib/components/Icon.svelte'
   import Meter from '../lib/components/Meter.svelte'
   import StatusDot from '../lib/components/StatusDot.svelte'
@@ -111,6 +112,9 @@
                 style:background="color-mix(in oklab, var(--critical) 14%, var(--surface))"
                 title={systems.alertsFor(s.id).map((a) => a.rule_name).join(', ')}>{n} alert{n > 1 ? 's' : ''}</span
               >
+            {/if}
+            {#if s.online && m?.battery}
+              <span class="ml-auto flex"><Battery battery={m.battery} /></span>
             {/if}
           </div>
           <div class="truncate pl-4 text-xs text-muted">{osLabel(s.info)} · {archLabel(s.info.arch)}</div>
